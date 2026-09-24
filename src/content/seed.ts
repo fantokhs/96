@@ -6,7 +6,7 @@ export const THEME: Theme = { id: "national-day-96", name: "اليوم الوط�
 
 const T = THEME.id;
 
-export const SEED_CATEGORIES: Category[] = [
+const V10_CATEGORIES: Category[] = [
   { id: "nd96-watani", themeId: T, name: "وطنية 96", description: "تاريخ الوطن ورموزه", color: "#22A06B", pattern: "star", mode: "normal", sort: 1, active: true },
   { id: "nd96-truefalse", themeId: T, name: "صح أو خطأ", description: "قرّر بسرعة", color: "#2F6FDE", pattern: "lattice", mode: "normal", sort: 2, active: true },
   { id: "nd96-whois", themeId: T, name: "من هو؟", description: "شخصيات سعودية", color: "#7E57D8", pattern: "arches", mode: "normal", sort: 3, active: true },
@@ -169,7 +169,7 @@ const DRAFTS: Record<string, Draft[]> = {
   ],
 };
 
-export const SEED_QUESTIONS: Question[] = Object.entries(DRAFTS).flatMap(([categoryId, drafts]) =>
+const V10_QUESTIONS: Question[] = Object.entries(DRAFTS).flatMap(([categoryId, drafts]) =>
   drafts.map((d, i) => ({
     ...d,
     id: `${categoryId}-${String(i + 1).padStart(2, "0")}`,
@@ -179,3 +179,67 @@ export const SEED_QUESTIONS: Question[] = Object.entries(DRAFTS).flatMap(([categ
     active: true,
   })),
 );
+
+// ─── V1.2 — خيمة الفنتوخ seed (khaymat_alfantokh_questions_seed.md, READY sections only) ───
+// Additive: fixed IDs, never overwrites or deletes existing rows. HOLD items are not imported.
+// Equivalent existing categories are reused (وطنية 96، سعودي وبس، كلمة السر).
+
+export const V12_CATEGORIES: Category[] = [
+  { id: "fk-dialect", themeId: T, name: "لهجات وعادات", description: "كلامنا وسوالفنا", color: "#169C9C", pattern: "lattice", mode: "normal", sort: 9, active: true },
+  { id: "fk-proverbs", themeId: T, name: "أمثال وكلام سعودي", description: "وش المثل؟", color: "#7E57D8", pattern: "waves", mode: "normal", sort: 10, active: true },
+  { id: "fk-challenges", themeId: T, name: "تحديات وأخرى", description: "أول واحد يسويها", color: "#E0548A", pattern: "chevron", mode: "buzzer", sort: 11, active: true },
+  // Picture questions need their images first — add them from /admin/content, then activate.
+  { id: "fk-image", themeId: T, name: "خمنها من الصورة", description: "عينك على الصورة", color: "#2F6FDE", pattern: "dots", mode: "normal", sort: 12, active: false },
+];
+
+const q = (id: string, categoryId: string, d: Draft, active = true): Question => ({
+  ...d,
+  id,
+  themeId: T,
+  categoryId,
+  points: d.points ?? 100,
+  active,
+});
+const PASSWORD_PROMPT = "كلمة السر 🤫 — المضيف يُري الكلمة للاعب واحد فقط، وهو يلمّح لفريقه بدون ما يقولها";
+const CHALLENGE_ANSWER = "أول من ينجز التحدي ويُريه للمضيف";
+
+export const V12_QUESTIONS: Question[] = [
+  // 1) وطنية ومعرفة سعودية → وطنية 96
+  q("fk-watani-01", "nd96-watani", open("ما هي أكبر مدينة في المملكة العربية السعودية؟", "الرياض")),
+  q("fk-watani-02", "nd96-watani", open("متى يكون تاريخ اليوم الوطني السعودي؟", "23 سبتمبر")),
+  q("fk-watani-03", "nd96-watani", open("ما هو شعار اليوم الوطني السعودي 96؟", "عزنا بطبعنا")),
+  q("fk-watani-04", "nd96-watani", mcq("ما الحي التاريخي الشهير في الدرعية والمسجل في اليونسكو؟", ["حي المنيف", "حي الطريف", "حي الخفيف"], 1)),
+  q("fk-watani-05", "nd96-watani", phrase("فوق هام السحب…", "وإن كنت ثرى")),
+  q("fk-watani-06", "nd96-watani", phrase("ارفع راسك أنت…", "سعودي")),
+  q("fk-watani-07", "nd96-watani", open("لدى السعوديين همة مثل هذا الجبل، ما اسم الجبل؟", "جبل طويق")),
+  q("fk-watani-08", "nd96-watani", open("قامت هذه الدولة على أساس أنها دولة التوحيد ودعوة لدين الله ورسوله. من أكون؟", "المملكة العربية السعودية")),
+  // 2) لهجات وعادات
+  q("fk-dialect-01", "fk-dialect", mcq("إذا قال لك أحد «اهجد»، وش يقصد؟", ["اهجم", "اهدأ", "اهرب"], 1)),
+  q("fk-dialect-02", "fk-dialect", mcq("وش ترد على جملة «هذا ما هو قدرك»؟", ["من طيب أصلك", "عاش من شافك", "الله يحييك ويبقيك"], 0)),
+  // 3) مدن ومعالم وتراث وأكل → سعودي وبس
+  q("fk-heritage-01", "nd96-saudi", mcq("منطقة مشهورة برقصة «الدحة»؟", ["الرياض", "الجوف", "مكة"], 1)),
+  q("fk-heritage-02", "nd96-saudi", mcq("طبق شعبي من القمح يُطبخ حتى يصبح قوامه متماسك، وش هو؟", ["القرصان", "الجريش", "المرقوق"], 1)),
+  // 4) خمنها من الصورة — inactive until an image is attached
+  q("fk-image-01", "fk-image", { ...open("خمّن المدينة من الصورة", "جدة (الجدة ↔ مدينة جدة)"), type: "IMAGE" }, false),
+  // 5) أمثال وكلام سعودي
+  q("fk-proverbs-01", "fk-proverbs", open("ما المثل السعودي الذي يُضرب لمن ينتقد شيئاً أو يقلل من قيمته لأنه يجهل قيمته الحقيقية؟", "اللي ما يعرف الصقر يشويه")),
+  q("fk-proverbs-02", "fk-proverbs", open("ما المثل الذي يُضرب في أن الإنسان يحكم على الآخرين غالباً من خلال أخلاقه وصفاته الشخصية؟", "كل يرى الناس بعين طبعه")),
+  // 6) أكمل ورتب والكلمات (the two «أكمل» items duplicate section 1 and are imported once)
+  q("fk-password-01", "nd96-password", open(PASSWORD_PROMPT, "قلم أخضر")),
+  q("fk-password-02", "nd96-password", open(PASSWORD_PROMPT, "ملعقة")),
+  q("fk-password-03", "nd96-password", open(PASSWORD_PROMPT, "قلم أخضر وكوب أخضر")),
+  q("fk-password-04", "nd96-password", open(PASSWORD_PROMPT, "سبيكة")),
+  q("fk-wordsearch-01", "fk-image", { ...open("ابحث عن الكلمة في الصورة", "السعودية"), type: "IMAGE" }, false),
+  q("fk-wordsearch-02", "fk-image", { ...open("ابحث عن الكلمة في الصورة", "ملك"), type: "IMAGE" }, false),
+  // 7) تحديات وأخرى — fastest finger
+  q("fk-challenge-01", "fk-challenges", open("أول شخص يكتب ويصوّر 📸", CHALLENGE_ANSWER)),
+  q("fk-challenge-02", "fk-challenges", open("أول شخص يصوّر 📸", CHALLENGE_ANSWER)),
+  q("fk-challenge-03", "fk-challenges", open("أول شخص يصوّر علم السعودية 🇸🇦", CHALLENGE_ANSWER)),
+  q("fk-challenge-04", "fk-challenges", open("أول شخص يصوّر قلم أخضر", CHALLENGE_ANSWER)),
+  q("fk-challenge-05", "fk-challenges", open("أول شخص يصوّر ملعقة", CHALLENGE_ANSWER)),
+  q("fk-challenge-06", "fk-challenges", open("أول شخص يصوّر قلم أخضر وكوب أخضر", CHALLENGE_ANSWER)),
+  q("fk-challenge-07", "fk-challenges", open("أول شخص يحط خلفية جوال وطنية", CHALLENGE_ANSWER)),
+];
+
+export const SEED_CATEGORIES: Category[] = [...V10_CATEGORIES, ...V12_CATEGORIES];
+export const SEED_QUESTIONS: Question[] = [...V10_QUESTIONS, ...V12_QUESTIONS];

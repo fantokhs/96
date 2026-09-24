@@ -11,7 +11,7 @@ const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 
 let g: Game = createGame({
   code: "AB96",
-  name: "تحدي المجلس",
+  name: "خيمة الفنتوخ",
   themeId: "national-day-96",
   teams: [
     { name: "الصقور", color: "#22A06B" },

@@ -1,4 +1,6 @@
-# 96 | تحدي المجلس
+# خيمة الفنتوخ
+
+مستوحاه من خيمة منيرة الماجد · theme: اليوم الوطني 96
 
 A real-time family party game for gatherings. The TV is the stage, every phone is a controller, and the host is the judge. The default theme is **Saudi National Day 96**.
 
@@ -8,7 +10,7 @@ A real-time family party game for gatherings. The TV is the stage, every phone i
 - **Content manager**: `/admin/content`, protected by a PIN.
 - **Test bench**: `/dev/CODE` shows the TV and 4 phones on one screen.
 
-Version: **V1.0**
+Version: **V1.2**
 
 ---
 

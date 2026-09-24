@@ -1,6 +1,7 @@
 // Supabase-backed store. Uses the service role key on the server only;
 // every table has RLS enabled with no public policies, so browsers can't touch data directly.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { THEME, V12_CATEGORIES, V12_QUESTIONS } from "../../content/seed";
 import type { Category, Game, Question } from "../game/types";
 import type { Media, SessionRecord, Store } from "./store";
 
@@ -93,6 +94,28 @@ export class SupabaseStore implements Store {
 
   constructor(url: string, serviceKey: string) {
     this.db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  }
+
+  /**
+   * One-time additive import of the V1.2 seed into an existing production DB.
+   * Inserts only rows whose IDs don't exist yet (never updates or deletes), then
+   * records a marker row so questions the host later deletes are not re-added.
+   */
+  async ensureContent() {
+    const marker = "_seed:v1.2";
+    const done = await this.db.from("themes").select("id").eq("id", marker).maybeSingle();
+    if (done.error) throw new Error(`Supabase: ${done.error.message}`);
+    if (done.data) return;
+    const insertNew = async (table: string, rows: object[]) => {
+      const res = await this.db.from(table).upsert(rows, { onConflict: "id", ignoreDuplicates: true });
+      if (!res.error) return;
+      // e.g. a referenced category was removed: fall back to row-by-row so the rest still land
+      for (const row of rows) await this.db.from(table).upsert(row, { onConflict: "id", ignoreDuplicates: true });
+    };
+    await insertNew("themes", [{ id: THEME.id, name: THEME.name }]);
+    await insertNew("categories", V12_CATEGORIES.map(fromCategory));
+    await insertNew("questions", V12_QUESTIONS.map(fromQuestion));
+    await insertNew("themes", [{ id: marker, name: "seed marker V1.2", active: false }]);
   }
 
   async createSession(code: string, game: Game, hostTokenHash: string) {

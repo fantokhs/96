@@ -5,35 +5,26 @@ import type { Outcome, PatternId, PublicPlayer, Team, Timer } from "@/lib/game/t
 import { useCountdown } from "@/lib/client/useGame";
 import { patternBg } from "./patterns";
 
-export const APP_VERSION = "V1.0";
+export const APP_VERSION = "V1.2";
 
-export function Logo96({ size = 64, sub = true }: { size?: number; sub?: boolean }) {
+/** Official "خيمة الفنتوخ" logo (includes its own subtitle). `size` ≈ visual height / 1.4. */
+export function Logo96({ size = 64 }: { size?: number; sub?: boolean }) {
+  const h = Math.round(size * 1.4);
   return (
-    <div className="flex flex-col items-center leading-none select-none">
-      <div className="flex items-center gap-2">
-        <Star size={size * 0.28} />
-        <span
-          className="num font-bold tracking-tight"
-          style={{
-            fontSize: size,
-            background: "linear-gradient(180deg,#f3dc9c 0%,#d6a63a 55%,#a97d22 100%)",
-            WebkitBackgroundClip: "text",
-            backgroundClip: "text",
-            color: "transparent",
-          }}
-        >
-          96
-        </span>
-        <Star size={size * 0.28} />
-      </div>
-      {sub && (
-        <span className="mt-1 font-semibold text-cream/80" style={{ fontSize: Math.max(12, size * 0.22) }}>
-          تحدي المجلس
-        </span>
-      )}
-    </div>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/brand/game-logo.webp"
+      alt="خيمة الفنتوخ"
+      width={Math.round(h * (900 / 708))}
+      height={h}
+      className="select-none"
+      style={{ height: h, width: "auto", filter: "drop-shadow(0 6px 18px rgba(0,0,0,.35))" }}
+      draggable={false}
+    />
   );
 }
+
+export const THEME_LABEL = "اليوم الوطني 96";
 
 export function Star({ size = 16, color = "#d6a63a" }: { size?: number; color?: string }) {
   return (

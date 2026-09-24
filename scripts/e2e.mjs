@@ -64,8 +64,8 @@ for (const [name, team] of names) {
       "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC",
       "base64",
     );
-    await page.locator('input[type="file"]').setInputFiles({ name: "me.png", mimeType: "image/png", buffer: png });
-    await page.getByText("غيّر الصورة").waitFor();
+    await page.locator('input[type="file"]:not([capture])').setInputFiles({ name: "me.png", mimeType: "image/png", buffer: png });
+    await page.getByText("إزالة الصورة").waitFor();
     await page.getByText("👩 أنثى").click();
   }
   await page.getByRole("button", { name: team, exact: true }).click();
@@ -124,12 +124,13 @@ await tv.screenshot({ path: `${SHOTS}/08-tv-correct.png` });
 await expectScore("الصقور", 100);
 log("الصقور +100 ✓");
 
-// 7. Auto-advance → الذيابة. They vote وطنية 96, pick a card, answer wrong
+// 7. Auto-advance → الذيابة. They vote سعودي وبس (all multiple-choice), pick a card, answer wrong
 await phones[2].page.getByText("صوّت للفئة").waitFor({ timeout: 15000 });
-for (const ph of phones.slice(2)) await ph.page.getByRole("button", { name: /^وطنية 96/ }).click();
+for (const ph of phones.slice(2)) await ph.page.getByRole("button", { name: /^سعودي وبس/ }).click();
 await phones[2].page.getByRole("button", { name: "1", exact: true }).click();
 await host.getByText("الإجابة (لك فقط)").waitFor();
 const answer2 = (await host.locator(".rounded-2xl.border-2 .text-goldlight").textContent()).trim();
+await phones[2].page.locator("button:has(span.rounded-full.bg-deep)").first().waitFor();
 const options = await phones[2].page.locator("button:has(span.rounded-full.bg-deep)").allTextContents();
 const wrongIdx = options.findIndex((o) => !o.endsWith(answer2));
 await phones[2].page.locator("button:has(span.rounded-full.bg-deep)").nth(wrongIdx).click();
@@ -188,7 +189,7 @@ while (guard++ < 40) {
 }
 
 // 12. Winner screen
-await tv.getByText("الفائز بتحدي 96").waitFor({ timeout: 15000 });
+await tv.getByText("الفائز في خيمة الفنتوخ").waitFor({ timeout: 15000 });
 await tv.waitForTimeout(1500);
 await tv.screenshot({ path: `${SHOTS}/11-tv-winner.png` });
 await phones[0].page.screenshot({ path: `${SHOTS}/12-phone-over.png` });

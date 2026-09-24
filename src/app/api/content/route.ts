@@ -1,6 +1,6 @@
 // Public category list for the create-game screen (no answers).
 import { handle, json } from "@/lib/server/http";
-import { getStore } from "@/lib/server/store";
+import { readyStore } from "@/lib/server/store";
 import { THEME } from "@/content/seed";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   return handle(async () => {
     const themeId = new URL(req.url).searchParams.get("themeId") || THEME.id;
-    const store = getStore();
+    const store = await readyStore();
     const [categories, questions] = await Promise.all([
       store.listCategories({ themeId }),
       store.listQuestions({ themeId }),

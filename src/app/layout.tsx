@@ -7,8 +7,8 @@ import "@fontsource/ibm-plex-sans-arabic/700.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "96 | تحدي المجلس",
-  description: "لعبة المجلس العائلية — اليوم الوطني 96",
+  title: "خيمة الفنتوخ | اليوم الوطني 96",
+  description: "خيمة الفنتوخ — لعبة العائلة، مستوحاه من خيمة منيرة الماجد",
 };
 
 export const viewport: Viewport = {

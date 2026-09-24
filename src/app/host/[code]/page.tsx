@@ -61,6 +61,13 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
   return <HostConsole code={code} token={token} />;
 }
 
+/** Opens the TV screen in its own window (easy to cast from a laptop). */
+function openTv(url: string, code: string) {
+  const w = window.open(url, `tv-${code}`, "popup,width=1280,height=720");
+  if (!w) window.open(url, "_blank"); // popup blocked → plain new tab
+  else w.focus();
+}
+
 function Center({ children }: { children: React.ReactNode }) {
   return <main className="flex min-h-dvh items-center justify-center">{children}</main>;
 }
@@ -146,6 +153,11 @@ function HostConsole({ code, token }: { code: string; token: string }) {
           </div>
         </div>
         <div className="flex gap-2">
+          {p.name !== "LOBBY" && (
+            <button className="btn btn-ghost px-3 py-2" title="فتح شاشة التلفزيون" aria-label="فتح شاشة التلفزيون" onClick={() => openTv(links.screen, code)}>
+              📺
+            </button>
+          )}
           {p.name !== "LOBBY" && p.name !== "GAME_OVER" && (
             <button className="btn btn-ghost px-3 py-2" onClick={() => send({ type: game.paused ? "resume" : "pause" })}>
               {game.paused ? "▶︎ استئناف" : "⏸ إيقاف"}
@@ -281,9 +293,10 @@ function LobbyPanel({ game, send, links, busy }: { game: HostView; send: Send; l
             <div className="text-sm text-cream/60">كود الجلسة</div>
             <div className="num text-5xl font-bold tracking-[0.2em] text-goldlight">{game.code}</div>
           </div>
-          <a className="btn btn-gold" href={links.screen} target="_blank" rel="noreferrer">
-            📺 افتح شاشة التلفزيون
-          </a>
+          <button className="btn btn-gold py-3 text-lg" onClick={() => openTv(links.screen, game.code)}>
+            📺 فتح شاشة التلفزيون
+          </button>
+          <p className="text-xs text-cream/50">تفتح في نافذة مستقلة — اعرضها على التلفزيون عبر Chromecast (Cast tab)</p>
         </div>
       </div>
       <LinkRow label="رابط اللاعبين" url={links.play} />

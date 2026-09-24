@@ -155,7 +155,24 @@ function JoinForm({
   const [photo, setPhoto] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoNote, setPhotoNote] = useState("");
+
+  const onPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    const f = input.files?.[0];
+    input.value = ""; // allow picking the same photo again
+    if (!f) return;
+    setPhotoBusy(true);
+    setPhotoNote("");
+    try {
+      setPhoto(await fileToDataUrl(f, { size: 256, square: true }));
+    } catch {
+      setPhotoNote("ما قدرنا نقرأ الصورة — جرّب صورة ثانية أو ادخل بدونها");
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
 
   if (game.phase.name === "GAME_OVER") {
     return (
@@ -170,7 +187,12 @@ function JoinForm({
     setErr("");
     try {
       let avatarUrl: string | null = null;
-      if (photo) avatarUrl = (await api<{ url: string }>("/api/media", { json: { dataUrl: photo } })).url;
+      if (photo) {
+        // The photo is optional: if the upload fails, join without it.
+        avatarUrl = await api<{ url: string }>("/api/media", { json: { dataUrl: photo } })
+          .then((r) => r.url)
+          .catch(() => null);
+      }
       const res = await api<Identity & { state: PublicGame }>(`/api/sessions/${game.code}/join`, {
         json: { name, gender, avatarUrl, teamId },
       });
@@ -188,35 +210,31 @@ function JoinForm({
     <main className="bg-majlis flex min-h-dvh flex-col items-center gap-5 px-5 py-8">
       <Logo96 size={56} />
       <div className="text-center">
-        <div className="text-sm text-cream/60">{game.name}</div>
+        {game.name !== "خيمة الفنتوخ" && <div className="text-sm text-cream/60">{game.name}</div>}
         <div className="num text-lg font-bold tracking-widest text-goldlight">{game.code}</div>
       </div>
       {removed && <p className="rounded-xl bg-cream/10 px-4 py-2 text-sm">خرجت من الجلسة — ادخل من جديد</p>}
 
-      <div className="relative">
+      <div className="flex flex-col items-center gap-3">
         <Character player={preview} color={color} size={110} showName={false} />
-        <button
-          className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-gold px-3 py-1 text-sm font-bold whitespace-nowrap text-ink shadow-lg"
-          onClick={() => fileRef.current?.click()}
-        >
-          📷 {photo ? "غيّر الصورة" : "أضف صورتك"}
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          capture="user"
-          className="hidden"
-          onChange={async (e) => {
-            const f = e.target.files?.[0];
-            if (!f) return;
-            try {
-              setPhoto(await fileToDataUrl(f, { size: 256, square: true }));
-            } catch (er) {
-              setErr((er as Error).message);
-            }
-          }}
-        />
+        <div className="grid w-full max-w-sm grid-cols-2 gap-2">
+          <label className="btn btn-ghost cursor-pointer px-2 py-3 text-sm">
+            📷 التقاط صورة
+            <input type="file" accept="image/*" capture="user" className="sr-only" onChange={onPhoto} />
+          </label>
+          <label className="btn btn-ghost cursor-pointer px-2 py-3 text-sm">
+            🖼️ اختيار من الصور
+            <input type="file" accept="image/*" className="sr-only" onChange={onPhoto} />
+          </label>
+        </div>
+        {photoBusy && <span className="text-sm text-cream/60">جارٍ تجهيز الصورة…</span>}
+        {photo && !photoBusy && (
+          <button className="text-sm text-cream/50 underline" onClick={() => setPhoto(null)}>
+            إزالة الصورة
+          </button>
+        )}
+        {photoNote && <span className="text-center text-sm text-[#ffb3b0]">{photoNote}</span>}
+        <span className="text-xs text-cream/40">الصورة اختيارية</span>
       </div>
 
       <div className="flex w-full max-w-sm flex-col gap-4">
@@ -266,7 +284,7 @@ function JoinForm({
 
         {err && <p className="text-center text-[#ffb3b0]">{err}</p>}
 
-        <button className="btn btn-gold py-4 text-xl" disabled={busy || !name.trim()} onClick={submit}>
+        <button className="btn btn-gold py-4 text-xl" disabled={busy || photoBusy || !name.trim()} onClick={submit}>
           {busy ? "لحظة…" : "ادخل اللعبة"}
         </button>
       </div>

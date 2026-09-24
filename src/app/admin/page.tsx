@@ -33,7 +33,7 @@ export default function AdminCreate() {
   const router = useRouter();
   const [content, setContent] = useState<{ themes: { id: string; name: string }[]; categories: CatInfo[] } | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [name, setName] = useState("تحدي المجلس");
+  const [name, setName] = useState("خيمة الفنتوخ");
   const [themeId, setThemeId] = useState("national-day-96");
   const [teamCount, setTeamCount] = useState(2);
   const [teams, setTeams] = useState(DEFAULT_TEAMS);
@@ -65,7 +65,8 @@ export default function AdminCreate() {
           name,
           themeId,
           teams: teams.slice(0, teamCount),
-          categoryIds: selected,
+          // null = content list still loading → server uses every active category
+          categoryIds: selected ?? undefined,
           settings: {
             totalQuestions: length.kind === "q" ? length.n : null,
             targetScore: length.kind === "score" ? length.n : null,
@@ -84,7 +85,10 @@ export default function AdminCreate() {
   };
 
   const toggleCat = (id: string) =>
-    setSelected((s) => (s?.includes(id) ? s.filter((x) => x !== id) : [...(s ?? []), id]));
+    setSelected((s) => {
+      const cur = s ?? content?.categories.filter((x) => x.count > 0).map((x) => x.id) ?? [];
+      return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    });
 
   return (
     <main className="bg-majlis mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-4 py-8">
@@ -164,7 +168,7 @@ export default function AdminCreate() {
         {loadError && <p className="text-[#ff8a85]">{loadError}</p>}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {content?.categories.map((c) => {
-            const on = selected?.includes(c.id) ?? false;
+            const on = selected ? selected.includes(c.id) : c.count > 0;
             return (
               <button
                 key={c.id}
@@ -230,7 +234,7 @@ export default function AdminCreate() {
 
       <button
         className="btn btn-gold sticky bottom-4 py-4 text-xl shadow-2xl"
-        disabled={busy || !selected?.length || teams.slice(0, teamCount).some((t) => !t.name.trim())}
+        disabled={busy || (selected !== null && selected.length === 0) || teams.slice(0, teamCount).some((t) => !t.name.trim())}
         onClick={create}
       >
         {busy ? "جارٍ الإنشاء…" : "إنشاء الجلسة"}

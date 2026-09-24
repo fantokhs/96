@@ -1,7 +1,7 @@
 // Regenerates supabase/seed.sql from src/content/seed.ts
 // Usage: npm run seed:sql
 import { readFileSync, writeFileSync } from "node:fs";
-import { SEED_CATEGORIES, SEED_QUESTIONS, THEME } from "../src/content/seed.ts";
+import { SEED_CATEGORIES, SEED_QUESTIONS, THEME, V12_CATEGORIES, V12_QUESTIONS } from "../src/content/seed.ts";
 
 const s = (v: string | null) => (v === null ? "null" : `'${v.replace(/'/g, "''")}'`);
 const j = (v: unknown) => (v === null || v === undefined ? "null" : `${s(JSON.stringify(v))}::jsonb`);
@@ -39,3 +39,27 @@ writeFileSync(
   `-- 96 | Majlis — full setup (schema + National Day 96 content). Paste into Supabase → SQL Editor → Run.\n\n${schema}\n${seed}`,
 );
 console.log(`supabase/seed.sql + setup.sql: ${SEED_CATEGORIES.length} categories, ${SEED_QUESTIONS.length} questions`);
+
+// Additive V1.2 import for an existing database: inserts only missing rows, never updates/deletes.
+// (The app also applies this automatically on first request; this file is a manual fallback.)
+const v12 = [
+  "-- V1.2 خيمة الفنتوخ — additive import. Safe to run on production: ON CONFLICT DO NOTHING.",
+  "insert into public.categories (id, theme_id, name, description, color, pattern, mode, sort, active) values",
+  V12_CATEGORIES.map(
+    (c) =>
+      `  (${s(c.id)}, ${s(c.themeId)}, ${s(c.name)}, ${s(c.description)}, ${s(c.color)}, ${s(c.pattern)}, ${s(c.mode)}, ${c.sort}, ${c.active})`,
+  ).join(",\n"),
+  "on conflict (id) do nothing;",
+  "",
+  "insert into public.questions (id, theme_id, category_id, question, answer, type, points, image_url, options, correct_option, active) values",
+  V12_QUESTIONS.map(
+    (q) =>
+      `  (${s(q.id)}, ${s(q.themeId)}, ${s(q.categoryId)}, ${s(q.question)}, ${s(q.answer)}, ${s(q.type)}, ${q.points}, ${s(q.imageUrl)}, ${j(q.options)}, ${q.correctOption ?? "null"}, ${q.active})`,
+  ).join(",\n"),
+  "on conflict (id) do nothing;",
+  "",
+  "insert into public.themes (id, name, active) values ('_seed:v1.2', 'seed marker V1.2', false) on conflict (id) do nothing;",
+  "",
+];
+writeFileSync(new URL("../supabase/seed_v1_2.sql", import.meta.url), v12.join("\n"));
+console.log(`supabase/seed_v1_2.sql: ${V12_CATEGORIES.length} categories, ${V12_QUESTIONS.length} questions`);

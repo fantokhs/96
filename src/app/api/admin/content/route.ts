@@ -3,7 +3,7 @@ import { GameError } from "@/lib/game/engine";
 import type { Category, CategoryMode, PatternId, Question, QuestionType } from "@/lib/game/types";
 import { body, handle, json } from "@/lib/server/http";
 import { newId } from "@/lib/server/sessions";
-import { getStore } from "@/lib/server/store";
+import { readyStore } from "@/lib/server/store";
 import { THEME } from "@/content/seed";
 import { timingSafeEqual } from "node:crypto";
 
@@ -23,7 +23,7 @@ const PATTERNS: PatternId[] = ["star", "lattice", "arches", "chevron", "dots", "
 export async function GET(req: Request) {
   return handle(async () => {
     assertPin(req);
-    const store = getStore();
+    const store = await readyStore();
     const [categories, questions] = await Promise.all([
       store.listCategories({ includeInactive: true }),
       store.listQuestions({ includeInactive: true }),
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
   return handle(async () => {
     assertPin(req);
     const b = await body<SaveBody>(req);
-    const store = getStore();
+    const store = await readyStore();
     if (b.kind === "category") {
       const c = b.item;
       const name = String(c.name ?? "").trim();
@@ -102,7 +102,7 @@ export async function DELETE(req: Request) {
     assertPin(req);
     const id = new URL(req.url).searchParams.get("id");
     if (!id) throw new GameError("طلب غير صالح");
-    await getStore().deleteQuestion(id);
+    await (await readyStore()).deleteQuestion(id);
     return json({ ok: true });
   });
 }

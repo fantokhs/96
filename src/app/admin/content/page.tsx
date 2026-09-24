@@ -41,11 +41,13 @@ export default function ContentManager() {
     else setPin("");
   }, [load]);
 
-  const save = async (kind: "category" | "question", item: object) => {
+  const [formKey, setFormKey] = useState(0);
+  const save = async (kind: "category" | "question", item: object, next?: Partial<Question>) => {
     try {
       await api("/api/admin/content", { json: { kind, item }, headers: { "x-admin-pin": pin! } });
       setEditingCat(null);
-      setEditingQ(null);
+      setEditingQ(next ?? null);
+      if (next) setFormKey((k) => k + 1);
       await load(pin!);
     } catch (e) {
       alert((e as Error).message);
@@ -166,7 +168,21 @@ export default function ContentManager() {
 
       {editingCat && <CategoryForm value={editingCat} onClose={() => setEditingCat(null)} onSave={(c) => save("category", c)} />}
       {editingQ && data && (
-        <QuestionForm value={editingQ} categories={data.categories} onClose={() => setEditingQ(null)} onSave={(q) => save("question", q)} />
+        <QuestionForm
+          key={formKey}
+          value={editingQ}
+          categories={data.categories}
+          onClose={() => setEditingQ(null)}
+          onSave={(q, another) =>
+            save(
+              "question",
+              q,
+              another
+                ? { categoryId: q.categoryId, themeId: q.themeId, type: q.type, points: q.points ?? 100, active: true, options: ["", "", "", ""], correctOption: 0 }
+                : undefined,
+            )
+          }
+        />
       )}
 
       <footer className="pt-6 text-center text-xs text-cream/35"><span className="num">{APP_VERSION}</span></footer>
@@ -243,7 +259,7 @@ function QuestionForm({
 }: {
   value: Partial<Question>;
   categories: Category[];
-  onSave: (q: Partial<Question>) => void;
+  onSave: (q: Partial<Question>, another?: boolean) => void;
   onClose: () => void;
 }) {
   const [q, setQ] = useState(value);
@@ -323,7 +339,12 @@ function QuestionForm({
           </div>
         </Label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={q.active !== false} onChange={(e) => setQ({ ...q, active: e.target.checked })} /> مفعّل</label>
-        <button className="btn btn-gold" disabled={uploading} onClick={() => onSave(q)}>{uploading ? "جارٍ رفع الصورة…" : "حفظ"}</button>
+        <div className="grid grid-cols-2 gap-2">
+          <button className="btn btn-gold" disabled={uploading} onClick={() => onSave(q)}>{uploading ? "جارٍ رفع الصورة…" : "حفظ"}</button>
+          {!q.id && (
+            <button className="btn btn-ghost" disabled={uploading} onClick={() => onSave(q, true)}>حفظ وسؤال جديد</button>
+          )}
+        </div>
       </div>
     </Modal>
   );

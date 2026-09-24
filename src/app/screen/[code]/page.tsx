@@ -13,6 +13,7 @@ import {
   Spinner,
   TeamBadge,
   teamById,
+  THEME_LABEL,
   TimerRing,
   UsedCard,
   type CharacterAction,
@@ -136,9 +137,12 @@ function Lobby({ game }: { game: PublicGame }) {
   return (
     <div className="flex h-full w-full items-stretch gap-[4vmin] p-[5vmin]">
       <div className="anim-rise flex w-[38%] flex-col items-center justify-center gap-[3vmin] text-center">
-        <Logo96 size={170} sub={false} />
-        <div className="text-[3.4vmin] font-bold text-cream/85">{game.name}</div>
-        {origin && <QR value={joinUrl} size={Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.3)} />}
+        <Logo96 size={Math.round(window.innerHeight * 0.16)} />
+        <div className="flex items-center gap-[1.5vmin] text-[2.6vmin] font-semibold text-cream/80">
+          {game.name !== "خيمة الفنتوخ" && <span>{game.name} ·</span>}
+          <span className="rounded-full bg-gold/15 px-[1.6vmin] py-[0.3vmin] text-goldlight">{THEME_LABEL}</span>
+        </div>
+        {origin && <QR value={joinUrl} size={Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.26)} />}
         <div className="flex flex-col items-center gap-1">
           <span className="text-[2.4vmin] text-cream/60">امسح الكود أو ادخل الرمز</span>
           <span className="num text-[9vmin] font-bold tracking-[0.2em] text-goldlight">{game.code}</span>
@@ -206,7 +210,7 @@ function TopBar({ game }: { game: PublicGame }) {
   return (
     <header className="flex items-center justify-between gap-[3vmin] px-[4vmin] pt-[3vmin] pb-[2vmin]">
       <div className="flex items-center gap-[2vmin]">
-        <Logo96 size={Math.round(window.innerHeight * 0.06)} sub={false} />
+        <Logo96 size={Math.round(window.innerHeight * 0.045)} />
         <span className="text-[2.2vmin] text-cream/60">
           {s.totalQuestions ? (
             <>
@@ -630,7 +634,7 @@ function Finale({ game, phase, sound }: { game: PublicGame; phase: Phase<"GAME_O
   }
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-[3vmin] p-[4vmin]">
-      <Logo96 size={Math.round(window.innerHeight * 0.08)} sub={false} />
+      <Logo96 size={Math.round(window.innerHeight * 0.14)} />
       <div className="anim-pop text-center">
         {tie ? (
           <div className="text-[10vmin] font-black text-goldlight">تعادل!</div>
@@ -639,7 +643,7 @@ function Finale({ game, phase, sound }: { game: PublicGame; phase: Phase<"GAME_O
             <div className="text-[12vmin] leading-none font-black" style={{ color: winners[0].color }}>
               {winners[0].name}
             </div>
-            <div className="mt-[1vmin] text-[5vmin] font-bold text-goldlight">الفائز بتحدي 96</div>
+            <div className="mt-[1vmin] text-[5vmin] font-bold text-goldlight">الفائز في خيمة الفنتوخ</div>
           </>
         )}
       </div>

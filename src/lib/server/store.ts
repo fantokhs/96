@@ -29,6 +29,8 @@ export interface Store {
   deleteQuestion(id: string): Promise<void>;
 
   putMedia(id: string, media: Media): Promise<void>;
+  /** Idempotent additive content import (Supabase only). */
+  ensureContent?(): Promise<void>;
   getMedia(id: string): Promise<Media | null>;
 }
 
@@ -53,4 +55,19 @@ export function getStore(): Store {
       : new MemoryStore();
   }
   return g.__store96;
+}
+
+const r = globalThis as unknown as { __ready96?: Promise<void> };
+
+/** getStore() plus the one-time additive seed import. Import failures never block the game. */
+export async function readyStore(): Promise<Store> {
+  const store = getStore();
+  if (store.ensureContent) {
+    r.__ready96 ??= store.ensureContent().catch((e) => {
+      console.error("seed import failed", e);
+      r.__ready96 = undefined; // retry on a later request
+    });
+    await r.__ready96;
+  }
+  return store;
 }

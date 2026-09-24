@@ -2,7 +2,7 @@ import { createGame, GameError } from "@/lib/game/engine";
 import type { Settings } from "@/lib/game/types";
 import { body, handle, json } from "@/lib/server/http";
 import { hashToken, newCode, newToken } from "@/lib/server/sessions";
-import { getStore } from "@/lib/server/store";
+import { readyStore } from "@/lib/server/store";
 import { THEME } from "@/content/seed";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ const int = (v: unknown, min: number, max: number, fallback: number | null) => {
 export async function POST(req: Request) {
   return handle(async () => {
     const b = await body<CreateBody>(req);
-    const store = getStore();
+    const store = await readyStore();
     const themeId = b.themeId || THEME.id;
     const teams = (b.teams ?? []).slice(0, 3).map((t, i) => ({
       name: String(t.name || `فريق ${i + 1}`).trim().slice(0, 20),
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
       const code = newCode();
       const game = createGame({
         code,
-        name: String(b.name || "تحدي المجلس").trim().slice(0, 40),
+        name: String(b.name || "خيمة الفنتوخ").trim().slice(0, 40),
         themeId,
         teams,
         categoryIds: wanted,
