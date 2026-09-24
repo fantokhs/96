@@ -77,7 +77,7 @@ export default function AdminCreate() {
       });
       local.set(`96:host:${res.code}`, res.hostToken);
       local.set("96:recent", [{ code: res.code, name, at: Date.now() }, ...recent].slice(0, 8));
-      router.push(`/host/${res.code}`);
+      router.push(`/control/${res.code}`);
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -108,7 +108,7 @@ export default function AdminCreate() {
           <h2 className="text-sm font-semibold text-cream/60">ألعابك الأخيرة</h2>
           <div className="flex flex-wrap gap-2">
             {recent.map((r) => (
-              <Link key={r.code} href={`/host/${r.code}`} className="btn btn-ghost px-3 py-2 text-sm">
+              <Link key={r.code} href={`/control/${r.code}`} className="btn btn-ghost px-3 py-2 text-sm">
                 <span className="num">{r.code}</span> · {r.name}
               </Link>
             ))}

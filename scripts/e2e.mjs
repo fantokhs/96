@@ -33,7 +33,7 @@ const host = await hostCtx.newPage();
 // 1. Host creates game (defaults: الصقور vs الذيابة, 10 questions)
 await host.goto(`${BASE}/admin`);
 await host.getByText("إنشاء الجلسة").click();
-await host.waitForURL(/\/host\/[A-Z0-9]{4}$/);
+await host.waitForURL(/\/control\/[A-Z0-9]{4}$/);
 const code = host.url().split("/").pop();
 log("session", code);
 await host.getByText("ابدأ اللعبة").waitFor();
@@ -133,7 +133,11 @@ const answer2 = (await host.locator(".rounded-2xl.border-2 .text-goldlight").tex
 await phones[2].page.locator("button:has(span.rounded-full.bg-deep)").first().waitFor();
 const options = await phones[2].page.locator("button:has(span.rounded-full.bg-deep)").allTextContents();
 const wrongIdx = options.findIndex((o) => !o.endsWith(answer2));
+// team consensus: one vote is not the team answer; the 2nd matching vote locks it
 await phones[2].page.locator("button:has(span.rounded-full.bg-deep)").nth(wrongIdx).click();
+await phones[2].page.getByText("صوّت 1 من 2").waitFor();
+if (await host.getByText("اختاروا إجابة خاطئة").count()) fail("single vote locked the team answer");
+await phones[3].page.locator("button:has(span.rounded-full.bg-deep)").nth(wrongIdx).click();
 await host.getByText("اختاروا إجابة خاطئة").waitFor();
 await tv.screenshot({ path: `${SHOTS}/09-tv-wrong.png` });
 log("الذيابة answered wrong ✓");
@@ -144,8 +148,10 @@ await tv.getByText("سرقة!").first().waitFor();
 await phones[0].page.getByText("فرصة سرقة").waitFor();
 await tv.screenshot({ path: `${SHOTS}/10-tv-steal.png` });
 await phones[0].page.locator("button:has(span.rounded-full.bg-deep)", { hasText: answer2 }).click();
+await phones[1].page.getByText("فرصة سرقة").first().waitFor();
+await phones[1].page.locator("button:has(span.rounded-full.bg-deep)", { hasText: answer2 }).click();
 try {
-  await tv.getByText("سرقوها!").waitFor({ timeout: 8000 });
+  await tv.getByText("+50").first().waitFor({ timeout: 8000 });
 } catch (e) {
   await tv.screenshot({ path: `${SHOTS}/fail-tv.png` });
   await phones[0].page.screenshot({ path: `${SHOTS}/fail-phone.png` });

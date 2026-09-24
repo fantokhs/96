@@ -17,7 +17,10 @@ export type SfxName =
   | "drum"
   | "laugh"
   | "whistle"
-  | "crackers";
+  | "crackers"
+  | "drums"
+  | "ooh"
+  | "applause";
 
 const MUTE_KEY = "96:muted";
 
@@ -186,6 +189,19 @@ class Sfx {
         this.tone(1900, 0, 0.25, "sine", 0.22, 2300);
         this.tone(2300, 0.28, 0.5, "sine", 0.22, 2250);
         this.wobble(2250, 0.28, 0.5, 60, 30);
+        break;
+      case "drums":
+        [0, 0.18, 0.36, 0.45, 0.63, 0.81, 0.9, 1.08].forEach((t, i) => this.drum(t, i % 3 === 2 ? 0.7 : 0.45));
+        break;
+      case "ooh":
+        // crowd "ooooh": a few voices sliding down
+        [220, 277, 330, 392].forEach((f, i) => {
+          this.tone(f, i * 0.02, 1.1, "sine", 0.09, f * 0.82);
+          this.tone(f * 2, i * 0.02, 1.1, "triangle", 0.03, f * 1.64);
+        });
+        break;
+      case "applause":
+        for (let i = 0; i < 26; i++) this.noise(Math.random() * 1.6, 0.05 + Math.random() * 0.05, 0.12 + Math.random() * 0.1, 1200, 3500);
         break;
       case "crackers":
         for (let i = 0; i < 9; i++) {

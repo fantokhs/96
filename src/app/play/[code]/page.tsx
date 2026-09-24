@@ -18,7 +18,7 @@ import {
 } from "@/components/ui";
 import { api, local } from "@/lib/client/api";
 import { fileToDataUrl } from "@/lib/client/image";
-import { useCountdown, useGame, useTickDriver } from "@/lib/client/useGame";
+import { useCountdown, useGame, useTickDriver, useUntil } from "@/lib/client/useGame";
 import type { Gender, PlayerAction, PublicGame, PublicPhase, PublicPlayer, Team } from "@/lib/game/types";
 
 type Phase<N extends PublicPhase["name"]> = Extract<PublicPhase, { name: N }>;
@@ -38,10 +38,58 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
   const code = use(params).code.toUpperCase();
   const [key, setKey] = useState<string | null>(null);
   const [me, setMe] = useState<Identity | null>(null);
+  const justJoined = useRef(false);
   const { game, setGame, error, online, now } = useGame(code);
   const [toast, setToast] = useState("");
   // Phones also nudge timed transitions (staggered) in case the host device sleeps.
   useTickDriver(game, now, 1500);
+  const [welcomeBack, setWelcomeBack] = useState(false);
+  const restored = useRef(false);
+  const [reconnected, setReconnected] = useState(false);
+  const wasOffline = useRef(false);
+
+  const isPlayer = !!(me && game?.players.some((p) => p.id === me.playerId));
+
+  // Auto-reconnect: a stored identity that still exists in the game is simply resumed.
+  useEffect(() => {
+    if (!isPlayer || restored.current) return;
+    restored.current = true;
+    if (!justJoined.current) {
+      setWelcomeBack(true);
+      const t = setTimeout(() => setWelcomeBack(false), 2200);
+      return () => clearTimeout(t);
+    }
+  }, [isPlayer]);
+
+  // Presence heartbeat (used for the team-vote majority). Cheap: the server writes at most every ~20s.
+  useEffect(() => {
+    if (!isPlayer || !me) return;
+    const ping = () =>
+      void api(`/api/sessions/${code}/act`, { json: { role: "player", ...me, action: { type: "ping" } } }).catch(() => {});
+    ping();
+    const id = setInterval(ping, 15_000);
+    const onVis = () => document.visibilityState === "visible" && ping();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("online", onVis);
+    };
+  }, [isPlayer, me, code]);
+
+  useEffect(() => {
+    if (!online) {
+      wasOffline.current = true;
+      return;
+    }
+    if (wasOffline.current) {
+      wasOffline.current = false;
+      setReconnected(true);
+      const t = setTimeout(() => setReconnected(false), 1800);
+      return () => clearTimeout(t);
+    }
+  }, [online]);
 
   useEffect(() => {
     // `?slot=n` lets several test players share one browser (see /dev).
@@ -93,6 +141,7 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
         game={game}
         removed={!!me}
         onJoined={(id, state) => {
+          justJoined.current = true;
           local.set(key, id);
           setMe(id);
           setGame(state);
@@ -120,7 +169,13 @@ export default function PlayPage({ params }: { params: Promise<{ code: string }>
         )}
       </header>
 
-      {!online && <div className="mx-4 rounded-xl bg-danger/30 px-3 py-2 text-center text-sm">انقطع الاتصال… نحاول مجدداً</div>}
+      {!online && <div className="mx-4 rounded-xl bg-danger/30 px-3 py-2 text-center text-sm">جاري إعادة الاتصال...</div>}
+      {online && reconnected && <div className="anim-fade mx-4 rounded-xl bg-leaf/30 px-3 py-2 text-center text-sm">تم الاتصال ✓</div>}
+      {welcomeBack && (
+        <div className="anim-pop fixed inset-x-6 top-6 z-50 rounded-2xl bg-gold px-4 py-3 text-center text-lg font-bold text-ink shadow-xl">
+          رجعنا لك 👋
+        </div>
+      )}
 
       <section className="flex flex-1 flex-col px-4 pb-6">
         {game.paused ? (
@@ -228,7 +283,7 @@ function JoinForm({
     }
   };
 
-  const preview: PublicPlayer = { id: "me", name: name || "؟", gender, avatarUrl: photo, teamId };
+  const preview: PublicPlayer = { id: "me", name: name || "؟", gender, avatarUrl: photo, teamId, online: true };
   const color = teamById(game.teams, teamId)?.color ?? "#22A06B";
 
   return (
@@ -380,20 +435,20 @@ function Controller({
       );
     case "CARD_PICK":
       return me.teamId === p.teamId ? (
-        <CardView game={game} phase={p} send={send} />
+        <CardView key={`${p.categoryId}-${game.turn.questionsPlayed}`} game={game} phase={p} send={send} />
       ) : (
         <Waiting emoji="🃏" title={`${teamById(game.teams, p.teamId)?.name} يختارون الكرت`} sub="انتظر دور فريقك" />
       );
     case "QUESTION":
-      if (p.buzzer) return <BuzzerView game={game} phase={p} me={me} send={send} />;
+      if (p.buzzer) return <BuzzerView key={p.question.id} game={game} phase={p} me={me} send={send} now={now} />;
       return me.teamId === p.teamId ? (
-        <AnswerView game={game} phase={p} send={send} now={now} />
+        <AnswerView key={`q-${p.question.id}`} game={game} phase={p} me={me} send={send} now={now} />
       ) : (
         <Waiting emoji="👀" title="انتظر دور فريقك" sub="ركّز… يمكن تجيكم فرصة سرقة!" />
       );
     case "STEAL":
       return me.teamId === p.teamId ? (
-        <AnswerView game={game} phase={p} send={send} now={now} />
+        <AnswerView key={`s-${p.question.id}`} game={game} phase={p} me={me} send={send} now={now} />
       ) : (
         <Waiting emoji="⚡" title={`${teamById(game.teams, p.teamId)?.name} يحاولون السرقة`} sub="انتظر دور فريقك" />
       );
@@ -476,23 +531,66 @@ function VoteView({
   );
 }
 
+/** Big 3-2-1 shown while answers are locked. */
+function Prep({ left, title, sub, go }: { left: number; title: string; sub?: string; go: string }) {
+  const n = Math.ceil(left / 1000);
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center select-none" style={{ pointerEvents: "none" }}>
+      <div className="text-2xl font-bold text-goldlight">{title}</div>
+      {sub && <div className="text-cream/70">{sub}</div>}
+      <div className="text-xl font-bold">استعدوا…</div>
+      <span key={n} className="num anim-count text-[9rem] leading-none font-black text-goldlight">
+        {n > 0 ? n : go}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Carry-over tap protection: a tap only counts if the finger went down AFTER the
+ * controls became active, so the touch that picked a category/card can't answer.
+ */
+function useFreshTap(active: boolean) {
+  const since = useRef<number>(Infinity);
+  const downAt = useRef<number>(0);
+  useEffect(() => {
+    since.current = active ? performance.now() : Infinity;
+  }, [active]);
+  return {
+    onPointerDown: () => {
+      downAt.current = performance.now();
+    },
+    fresh: () => active && downAt.current >= since.current,
+  };
+}
+
 function CardView({ game, phase, send }: { game: PublicGame; phase: Phase<"CARD_PICK">; send: Send }) {
   const c = game.categories.find((x) => x.id === phase.categoryId)!;
   const cards = game.boards[phase.categoryId] ?? [];
+  // brief lock so the category-vote tap can't pick a card
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setArmed(true), 700);
+    return () => clearTimeout(t);
+  }, []);
+  const tap = useFreshTap(armed);
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="text-center">
-        <div className="text-sm text-cream/60">{c.name}</div>
-        <h2 className="text-2xl font-bold">اختر كرت!</h2>
+        <div className="text-sm text-cream/60">تم اختيار الفئة</div>
+        <div className="text-xl font-bold" style={{ color: c.color }}>{c.name}</div>
+        <h2 className="mt-1 text-2xl font-bold">اختر كرت!</h2>
       </div>
       <div className="grid grid-cols-3 gap-3">
         {cards.map((card, i) => (
           <button
             key={i}
-            disabled={card.used}
+            disabled={card.used || !armed}
             className="anim-deal aspect-[5/7] transition active:scale-95 disabled:pointer-events-none"
             style={{ animationDelay: `${i * 50}ms` }}
+            onPointerDown={tap.onPointerDown}
             onClick={() => {
+              if (!tap.fresh()) return;
               buzz(40);
               void send({ type: "pick_card", index: i });
             }}
@@ -508,61 +606,157 @@ function CardView({ game, phase, send }: { game: PublicGame; phase: Phase<"CARD_
 function AnswerView({
   game,
   phase,
+  me,
   send,
   now,
 }: {
   game: PublicGame;
   phase: Phase<"QUESTION"> | Phase<"STEAL">;
+  me: PublicPlayer;
   send: Send;
   now: () => number;
 }) {
   const q = phase.question;
   const steal = phase.name === "STEAL";
   const attempt = phase.attempt;
+  const vote = phase.teamVote;
+  const left = useUntil(phase.readyAt, now);
+  const ready = left <= 0;
+  const [goFlash, setGoFlash] = useState(false);
+  const [mine, setMine] = useState<number | null>(null);
+  const sentRef = useRef<number | null>(null);
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const locked = !!attempt;
+  const stuck = !!vote?.stuck;
+  const tap = useFreshTap(ready && !locked && !stuck);
+  const cat = game.categories.find((c) => c.id === q.categoryId);
+
+  useEffect(() => {
+    if (!ready || !phase.readyAt) return;
+    setGoFlash(true);
+    buzz(60);
+    const t = setTimeout(() => setGoFlash(false), 1200);
+    return () => clearTimeout(t);
+  }, [ready, phase.readyAt]);
+  useEffect(() => () => void (pending.current && clearTimeout(pending.current)), []);
+
+  if (!ready) {
+    return (
+      <Prep
+        left={left}
+        title={steal ? "⚡ فرصة سرقة!" : `تم اختيار الفئة: ${cat?.name ?? ""}`}
+        sub={q.options ? "السؤال على الشاشة — اقرأوه زين" : undefined}
+        go="جاوب الآن!"
+      />
+    );
+  }
+  if (!q.options) {
+    return <Waiting emoji="🎤" title="جاوبوا بصوت عالي!" sub="السؤال على الشاشة — المضيف هو الحكم" />;
+  }
+
+  const castVote = (i: number) => {
+    if (locked || stuck || sentRef.current === i) return; // debounce repeats
+    setMine(i);
+    buzz(40);
+    if (pending.current) clearTimeout(pending.current);
+    const submit = () => {
+      pending.current = null;
+      sentRef.current = i;
+      void send({ type: "answer", option: i }).then((ok) => {
+        if (!ok && sentRef.current === i) sentRef.current = null;
+      });
+    };
+    // one connected player: show the choice briefly before it becomes final
+    if ((vote?.total ?? 1) <= 1) pending.current = setTimeout(submit, 700);
+    else submit();
+  };
+
+  const voted = vote?.voters.includes(me.id) ?? false;
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">{steal ? "⚡ فرصة سرقة!" : "دوركم!"}</h2>
         <MiniTimer phase={phase} now={now} />
       </div>
-      {q.options ? (
-        <>
-          <p className="text-cream/70">{attempt ? "تم إرسال إجابة فريقك" : "اختاروا الإجابة — أول ضغطة تُعتمد"}</p>
-          <div className={`grid flex-1 content-start gap-3 ${q.options.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
-            {q.options.map((o, i) => {
-              const picked = attempt?.option === i;
-              const excluded = steal && phase.excludedOption === i;
-              return (
-                <button
-                  key={i}
-                  disabled={!!attempt || excluded}
-                  className={`flex items-center gap-3 rounded-2xl px-4 text-start text-lg font-bold transition active:scale-95 ${
-                    q.options!.length === 2 ? "min-h-40 flex-col justify-center text-3xl" : "min-h-16 py-3"
-                  } ${picked ? (attempt?.correct ? "bg-leaf" : "bg-danger") : excluded ? "bg-ink/40 line-through opacity-40" : "bg-cream/10 ring-1 ring-cream/20"}`}
-                  onClick={() => {
-                    buzz(40);
-                    void send({ type: "answer", option: i });
-                  }}
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-deep text-base">
-                    {q.type === "TRUE_FALSE" ? (i === 0 ? "✓" : "✕") : OPTION_LETTERS[i]}
-                  </span>
-                  <span>{o}</span>
-                </button>
-              );
-            })}
+      {goFlash && !locked && <div className="anim-stamp rounded-2xl bg-gold py-2 text-center text-2xl font-black text-ink">جاوب الآن!</div>}
+      {locked ? (
+        <div className="anim-pop rounded-2xl bg-leaf/30 px-3 py-3 text-center text-lg font-bold ring-1 ring-leaf">تم اعتماد إجابة الفريق ✓</div>
+      ) : stuck ? (
+        <div className="rounded-2xl bg-gold/20 px-3 py-3 text-center font-bold text-goldlight">تعادل في تصويت الفريق — المضيف يحسم</div>
+      ) : vote?.tie ? (
+        <div className="anim-stamp rounded-2xl bg-gold px-3 py-2 text-center font-bold text-ink">تعادل! عندكم ٣ ثواني للحسم</div>
+      ) : null}
+      <div className={`grid flex-1 content-start gap-3 ${q.options.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+        {q.options.map((o, i) => {
+          const final = attempt?.option === i;
+          const chosen = !locked && mine === i;
+          const excluded = steal && phase.excludedOption === i;
+          return (
+            <button
+              key={i}
+              disabled={locked || stuck || excluded}
+              onPointerDown={tap.onPointerDown}
+              onClick={() => tap.fresh() && castVote(i)}
+              className={`flex items-center gap-3 rounded-2xl px-4 text-start text-lg font-bold transition active:scale-95 ${
+                q.options!.length === 2 ? "min-h-40 flex-col justify-center text-3xl" : "min-h-16 py-3"
+              } ${
+                final
+                  ? attempt?.correct
+                    ? "bg-leaf"
+                    : "bg-danger"
+                  : chosen
+                    ? "bg-gold text-ink ring-4 ring-cream"
+                    : excluded
+                      ? "bg-ink/40 line-through opacity-40"
+                      : locked
+                        ? "bg-cream/5 opacity-50"
+                        : "bg-cream/10 ring-1 ring-cream/20"
+              }`}
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-deep text-base text-cream">
+                {q.type === "TRUE_FALSE" ? (i === 0 ? "✓" : "✕") : OPTION_LETTERS[i]}
+              </span>
+              <span>{o}</span>
+            </button>
+          );
+        })}
+      </div>
+      {!locked && vote && (
+        <div className="rounded-2xl bg-ink/50 px-4 py-3 text-center">
+          {mine !== null ? (
+            <div className="text-lg font-bold">
+              اختيارك: {q.type === "TRUE_FALSE" ? q.options[mine] : OPTION_LETTERS[mine]}
+            </div>
+          ) : voted ? (
+            <div className="text-lg font-bold">تم تسجيل صوتك</div>
+          ) : (
+            <div className="text-cream/70">صوتك يحدد إجابة الفريق — الأغلبية تُعتمد</div>
+          )}
+          <div className="num text-cream/70">
+            صوّت {vote.voters.length} من {vote.total}
           </div>
-        </>
-      ) : (
-        <Waiting emoji="🎤" title="جاوبوا بصوت عالي!" sub="السؤال على الشاشة — المضيف هو الحكم" />
+        </div>
       )}
     </div>
   );
 }
 
-function BuzzerView({ game, phase, me, send }: { game: PublicGame; phase: Phase<"QUESTION">; me: PublicPlayer; send: Send }) {
+function BuzzerView({
+  game,
+  phase,
+  me,
+  send,
+  now,
+}: {
+  game: PublicGame;
+  phase: Phase<"QUESTION">;
+  me: PublicPlayer;
+  send: Send;
+  now: () => number;
+}) {
   const b = phase.buzzer!;
   const [pressed, setPressed] = useState(false);
+  const left = useUntil(phase.readyAt, now);
   useEffect(() => setPressed(false), [b.lockedBy, b.excludedTeamIds.length]);
   if (b.lockedBy) {
     const winner = game.players.find((x) => x.id === b.lockedBy!.playerId);
@@ -575,9 +769,10 @@ function BuzzerView({ game, phase, me, send }: { game: PublicGame; phase: Phase<
   if (me.teamId && b.excludedTeamIds.includes(me.teamId)) {
     return <Waiting emoji="🙈" title="فريقك خارج هذه المحاولة" sub="الفرق الثانية تحاول الحين" />;
   }
+  if (left > 0) return <Prep left={left} title="⚡ أسرع إصبع" sub="السؤال على الشاشة" go="انطلق!" />;
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6">
-      <div className="text-center text-2xl font-bold">السؤال على الشاشة!</div>
+      <div className="anim-stamp text-center text-3xl font-black text-goldlight">انطلق!</div>
       <button
         disabled={pressed}
         className="anim-pulse flex aspect-square w-[72vw] max-w-80 items-center justify-center rounded-full bg-danger text-5xl font-black shadow-[0_18px_0_#8f2a27] transition active:translate-y-3 active:shadow-[0_6px_0_#8f2a27] disabled:opacity-70"

@@ -16,8 +16,8 @@ import {
   TimerRing,
 } from "@/components/ui";
 import { api, local } from "@/lib/client/api";
-import { useGame, useTickDriver } from "@/lib/client/useGame";
-import type { HostAction, HostView, PublicPhase } from "@/lib/game/types";
+import { useGame, useTickDriver, useUntil } from "@/lib/client/useGame";
+import type { HostAction, HostView, PublicPhase, SoundboardSfx } from "@/lib/game/types";
 
 type Phase<N extends PublicPhase["name"]> = Extract<PublicPhase, { name: N }>;
 type Send = (a: HostAction) => Promise<void>;
@@ -50,15 +50,76 @@ export default function HostPage({ params }: { params: Promise<{ code: string }>
   if (token === null) return <Center><Spinner /></Center>;
   if (!token) {
     return (
-      <FullScreenMessage title="هذا الجهاز ليس جهاز المضيف">
-        <p className="max-w-sm text-cream/60">افتح رابط التحكم من الجهاز الذي أنشأ اللعبة، أو أنشئ لعبة جديدة.</p>
-        <Link href="/admin" className="btn btn-gold">
-          لعبة جديدة
-        </Link>
-      </FullScreenMessage>
+      <PinLogin
+        code={code}
+        onOk={(pin) => {
+          local.set(`96:host:${code}`, pin);
+          setToken(pin);
+        }}
+      />
     );
   }
-  return <HostConsole code={code} token={token} />;
+  return (
+    <HostConsole
+      code={code}
+      token={token}
+      onUnauthorized={() => {
+        local.del(`96:host:${code}`);
+        setToken("");
+      }}
+    />
+  );
+}
+
+/** /control/CODE on any device: enter the shared control PIN once. */
+function PinLogin({ code, onOk }: { code: string; onOk: (pin: string) => void }) {
+  const [pin, setPin] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await api(`/api/sessions/${code}`, { headers: { "x-host-token": pin.trim() } });
+      onOk(pin.trim());
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="bg-majlis flex min-h-dvh flex-col items-center justify-center gap-6 p-6">
+      <Logo96 size={90} />
+      <div className="text-center">
+        <div className="text-sm text-cream/60">جهاز التحكم · الجلسة</div>
+        <div className="num text-3xl font-bold tracking-[0.2em] text-goldlight">{code}</div>
+      </div>
+      <form
+        className="flex w-full max-w-xs flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <label className="text-center font-bold" htmlFor="pin">
+          رمز التحكم
+        </label>
+        <input
+          id="pin"
+          className="field num text-center text-3xl tracking-[0.4em]"
+          inputMode="numeric"
+          autoComplete="off"
+          autoFocus
+          value={pin}
+          onChange={(e) => setPin(e.target.value)}
+        />
+        <button className="btn btn-gold py-3 text-xl" disabled={busy || !pin.trim()}>
+          {busy ? "لحظة…" : "دخول"}
+        </button>
+        {err && <p className="text-center text-[#ffb3b0]">{err}</p>}
+      </form>
+    </main>
+  );
 }
 
 /** Opens the TV screen in its own window (easy to cast from a laptop). */
@@ -72,7 +133,7 @@ function Center({ children }: { children: React.ReactNode }) {
   return <main className="flex min-h-dvh items-center justify-center">{children}</main>;
 }
 
-function HostConsole({ code, token }: { code: string; token: string }) {
+function HostConsole({ code, token, onUnauthorized }: { code: string; token: string; onUnauthorized: () => void }) {
   const { game, setGame, error, online, now } = useGame<HostView>(code, token);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
@@ -96,15 +157,10 @@ function HostConsole({ code, token }: { code: string; token: string }) {
     [code, token, setGame],
   );
 
-  if (error?.status === 401) {
-    return (
-      <FullScreenMessage title="رمز المضيف غير صالح">
-        <Link href="/admin" className="btn btn-gold">
-          لعبة جديدة
-        </Link>
-      </FullScreenMessage>
-    );
-  }
+  useEffect(() => {
+    if (error?.status === 401) onUnauthorized();
+  }, [error, onUnauthorized]);
+  if (error?.status === 401) return <Center><Spinner /></Center>;
   if (error?.status === 404) {
     return (
       <FullScreenMessage title="الجلسة غير موجودة">
@@ -120,7 +176,7 @@ function HostConsole({ code, token }: { code: string; token: string }) {
   const links = {
     play: `${origin}/play/${code}`,
     screen: `${origin}/screen/${code}`,
-    host: `${origin}/host/${code}#k=${token}`,
+    control: `${origin}/control/${code}`,
   };
 
   return (
@@ -174,7 +230,7 @@ function HostConsole({ code, token }: { code: string; token: string }) {
         </div>
       </header>
 
-      {!online && <div className="rounded-xl bg-danger/30 px-3 py-2 text-sm">انقطع الاتصال… نحاول مجدداً</div>}
+      {!online && <div className="rounded-xl bg-danger/30 px-3 py-2 text-sm">جاري إعادة الاتصال...</div>}
 
       {p.name !== "LOBBY" && <Scores game={game} send={send} />}
 
@@ -182,9 +238,31 @@ function HostConsole({ code, token }: { code: string; token: string }) {
         <details className="panel px-4 py-2">
           <summary className="cursor-pointer text-sm font-semibold text-cream/70">🎛️ مؤثرات (على التلفزيون)</summary>
           <div className="grid grid-cols-3 gap-2 py-2">
-            <button className="btn btn-ghost px-2 py-2 text-sm" onClick={() => send({ type: "sfx", name: "laugh" })}>😂 ضحكة</button>
-            <button className="btn btn-ghost px-2 py-2 text-sm" onClick={() => send({ type: "sfx", name: "whistle" })}>📣 صفارة</button>
-            <button className="btn btn-ghost px-2 py-2 text-sm" onClick={() => send({ type: "sfx", name: "crackers" })}>🎆 طراطيع</button>
+            {SOUNDS.map(([name, label]) => (
+              <button key={name} className="btn btn-ghost px-2 py-2 text-sm" onClick={() => send({ type: "sfx", name })}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {p.name !== "LOBBY" && p.name !== "GAME_OVER" && (
+        <details className="panel px-4 py-2">
+          <summary className="cursor-pointer text-sm font-semibold text-cream/70">🧰 أدوات المضيف</summary>
+          <div className="grid grid-cols-2 gap-2 py-2 sm:grid-cols-4">
+            <button className="btn btn-ghost px-2 py-3 text-sm" disabled={!game.host.canUndo || busy} onClick={() => send({ type: "undo" })}>
+              ↩︎ تراجع عن آخر حركة
+            </button>
+            <button className="btn btn-ghost px-2 py-3 text-sm" disabled={busy} onClick={() => send({ type: game.paused ? "resume" : "pause" })}>
+              {game.paused ? "▶︎ استكمال الوقت" : "⏸ إيقاف الوقت"}
+            </button>
+            <button className="btn btn-ghost px-2 py-3 text-sm" disabled={busy} onClick={() => send({ type: "add_time", seconds: 5 })}>
+              ⏱ +5 ثواني
+            </button>
+            <button className="btn btn-ghost px-2 py-3 text-sm" disabled={busy} onClick={() => send({ type: "skip" })}>
+              ⏭ تخطي السؤال
+            </button>
           </div>
         </details>
       )}
@@ -200,11 +278,9 @@ function HostConsole({ code, token }: { code: string; token: string }) {
 
       {p.name !== "LOBBY" && (
         <details className="panel p-4">
-          <summary className="cursor-pointer font-semibold text-cream/80">الروابط واللاعبون</summary>
+          <summary className="cursor-pointer font-semibold text-cream/80">🔗 الروابط واللاعبون</summary>
           <div className="mt-4 flex flex-col gap-4">
-            <LinkRow label="شاشة التلفزيون" url={links.screen} />
-            <LinkRow label="رابط اللاعبين" url={links.play} />
-            <LinkRow label="التحكم من جهاز آخر" url={links.host} secret />
+            <LinksPanel game={game} links={links} compact />
             <PlayersEditor game={game} send={send} />
           </div>
         </details>
@@ -266,53 +342,131 @@ function Scores({ game, send }: { game: HostView; send: Send }) {
   );
 }
 
-function LinkRow({ label, url, secret }: { label: string; url: string; secret?: boolean }) {
+const SOUNDS: [SoundboardSfx, string][] = [
+  ["laugh", "😂 ضحكة"],
+  ["whistle", "📣 صفارة"],
+  ["crackers", "🎆 طراطيع"],
+  ["drums", "🥁 طبول"],
+  ["ooh", "😮 أوووه!"],
+  ["applause", "👏 تصفيق"],
+];
+
+type Links = { play: string; screen: string; control: string };
+
+function LinkCard({
+  title,
+  icon,
+  url,
+  note,
+  onOpen,
+  children,
+}: {
+  title: string;
+  icon: string;
+  url: string;
+  note?: React.ReactNode;
+  onOpen?: () => void;
+  children?: React.ReactNode;
+}) {
   const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const t = document.createElement("textarea");
+      t.value = url;
+      document.body.appendChild(t);
+      t.select();
+      document.execCommand("copy");
+      t.remove();
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  const share = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `خيمة الفنتوخ — ${title}`, url });
+        return;
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return;
+      }
+    }
+    void copy();
+  };
   return (
-    <div className="flex items-center gap-2">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm text-cream/60">{label}</div>
-        <div className="num truncate text-sm">{secret ? url.replace(/#k=.*/, "#k=••••") : url}</div>
+    <div className="flex flex-col gap-3 rounded-2xl bg-ink/50 p-4 ring-1 ring-cream/10">
+      <div className="flex items-center gap-2 text-lg font-bold">
+        <span className="text-2xl">{icon}</span>
+        {title}
       </div>
-      <button
-        className="btn btn-ghost px-3 py-2 text-sm"
-        onClick={() => {
-          void navigator.clipboard?.writeText(url).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-      >
-        {copied ? "✓ نُسخ" : "نسخ"}
-      </button>
-      {!secret && (
-        <a className="btn btn-ghost px-3 py-2 text-sm" href={url} target="_blank" rel="noreferrer">
-          فتح
-        </a>
-      )}
+      {children}
+      <div className="num truncate text-sm text-cream/60" dir="ltr">
+        {url.replace(/^https?:\/\//, "")}
+      </div>
+      {note}
+      <div className="grid grid-cols-3 gap-2">
+        {onOpen ? (
+          <button className="btn btn-ghost px-2 py-2.5 text-sm" onClick={onOpen}>
+            فتح
+          </button>
+        ) : (
+          <a className="btn btn-ghost px-2 py-2.5 text-sm" href={url} target="_blank" rel="noreferrer">
+            فتح
+          </a>
+        )}
+        <button className="btn btn-ghost px-2 py-2.5 text-sm" onClick={copy}>
+          {copied ? "✓ نُسخ" : "نسخ"}
+        </button>
+        <button className="btn btn-gold px-2 py-2.5 text-sm" onClick={share}>
+          مشاركة
+        </button>
+      </div>
     </div>
   );
 }
 
-function LobbyPanel({ game, send, links, busy }: { game: HostView; send: Send; links: Record<string, string>; busy: boolean }) {
+/** The three links a party needs: players (QR), TV screen, control device. */
+function LinksPanel({ game, links, compact = false }: { game: HostView; links: Links; compact?: boolean }) {
+  return (
+    <div className={`grid gap-3 ${compact ? "md:grid-cols-3" : "md:grid-cols-3"}`}>
+      <LinkCard title="اللاعبون" icon="📱" url={links.play}>
+        {!compact && links.play.startsWith("http") && (
+          <div className="flex justify-center">
+            <QR value={links.play} size={170} />
+          </div>
+        )}
+      </LinkCard>
+      <LinkCard
+        title="شاشة العرض"
+        icon="📺"
+        url={links.screen}
+        onOpen={() => openTv(links.screen, game.code)}
+        note={<p className="text-xs text-cream/50">افتحها على اللابتوب واعرضها على التلفزيون (Cast tab)</p>}
+      />
+      <LinkCard
+        title="جهاز التحكم"
+        icon="🎮"
+        url={links.control}
+        note={
+          <p className="text-sm">
+            رمز الدخول: <span className="num font-bold text-goldlight">{game.host.pin}</span>
+          </p>
+        }
+      />
+    </div>
+  );
+}
+
+function LobbyPanel({ game, send, links, busy }: { game: HostView; send: Send; links: Links; busy: boolean }) {
   return (
     <>
-      <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start">
-        {links.play.startsWith("http") && <QR value={links.play} size={160} />}
-        <div className="flex flex-1 flex-col gap-3">
-          <div>
-            <div className="text-sm text-cream/60">كود الجلسة</div>
-            <div className="num text-5xl font-bold tracking-[0.2em] text-goldlight">{game.code}</div>
-          </div>
-          <button className="btn btn-gold py-3 text-lg" onClick={() => openTv(links.screen, game.code)}>
-            📺 فتح شاشة التلفزيون
-          </button>
-          <p className="text-xs text-cream/50">تفتح في نافذة مستقلة — اعرضها على التلفزيون عبر Chromecast (Cast tab)</p>
-        </div>
+      <div className="text-center">
+        <div className="text-lg font-bold">{game.name}</div>
+        <div className="text-sm text-cream/60">كود الجلسة</div>
+        <div className="num text-5xl font-bold tracking-[0.2em] text-goldlight">{game.code}</div>
       </div>
-      <LinkRow label="رابط اللاعبين" url={links.play} />
-      <LinkRow label="شاشة التلفزيون" url={links.screen} />
-      <LinkRow label="التحكم من جهاز آخر" url={links.host} secret />
+      <LinksPanel game={game} links={links} />
       <PlayersEditor game={game} send={send} />
       <button className="btn btn-gold py-4 text-xl" disabled={busy} onClick={() => send({ type: "start" })}>
         ابدأ اللعبة
@@ -346,6 +500,10 @@ function PlayersEditor({ game, send }: { game: HostView; send: Send }) {
                   <div className="flex items-center gap-2">
                     <Avatar player={pl} color={t.color} size={28} />
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold">{pl.name}</span>
+                    <span
+                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${pl.online ? "bg-leaf" : "bg-cream/25"}`}
+                      title={pl.online ? "متصل" : "غير متصل"}
+                    />
                     <button
                       className="px-1 text-cream/40 hover:text-[#ff8a85]"
                       aria-label="إزالة"
@@ -482,6 +640,9 @@ function QuestionPanel({
   const stealTargets = game.teams.filter((t) => t.id !== phase.teamId);
   const attempt = phase.attempt;
   const pts = steal || (buzzer && buzzer.excludedTeamIds.length > 0) ? game.settings.stealPoints : q.points || game.settings.correctPoints;
+  const vote = phase.teamVote;
+  const counts = game.host.voteCounts;
+  const prepLeft = useUntil(phase.readyAt, now);
 
   return (
     <>
@@ -512,19 +673,56 @@ function QuestionPanel({
         <div className="text-2xl font-bold text-goldlight">{game.host.answer}</div>
       </div>
 
+      {prepLeft > 0 && (
+        <div className="rounded-xl bg-ink/50 px-3 py-2 text-center font-bold text-goldlight">
+          استعدوا… <span className="num">{Math.ceil(prepLeft / 1000)}</span>
+        </div>
+      )}
+
       {q.options && (
         <div className="grid grid-cols-2 gap-2 text-sm">
           {q.options.map((o, i) => (
             <div
               key={i}
-              className={`rounded-lg px-3 py-2 ${i === game.host.correctOption ? "bg-leaf/40 font-bold" : "bg-cream/5"} ${
-                attempt?.option === i && !attempt.correct ? "ring-2 ring-danger" : ""
+              className={`flex items-center justify-between rounded-lg px-3 py-2 ${i === game.host.correctOption ? "bg-leaf/40 font-bold" : "bg-cream/5"} ${
+                attempt?.option === i ? (attempt.correct ? "ring-2 ring-leaf" : "ring-2 ring-danger") : ""
               }`}
             >
-              {q.type === "TRUE_FALSE" ? "" : `${OPTION_LETTERS[i]}. `}
-              {o}
+              <span>
+                {q.type === "TRUE_FALSE" ? "" : `${OPTION_LETTERS[i]}. `}
+                {o}
+              </span>
+              {counts && (counts[i] ?? 0) > 0 && <span className="num rounded-full bg-ink/60 px-2 text-xs">{counts[i]}</span>}
             </div>
           ))}
+        </div>
+      )}
+
+      {vote && !attempt && (
+        <div className="rounded-xl bg-ink/50 px-3 py-2 text-center text-sm">
+          🗳️ الفريق يتشاور — صوّت <span className="num font-bold">{vote.voters.length}</span> من{" "}
+          <span className="num font-bold">{vote.total}</span>
+          <span className="text-cream/50"> (الأغلبية تُعتمد تلقائياً)</span>
+        </div>
+      )}
+      {vote?.tie && !vote.stuck && !attempt && (
+        <div className="rounded-xl bg-gold/20 px-3 py-2 text-center font-semibold text-goldlight">تعادل — جولة حسم ٣ ثواني</div>
+      )}
+      {vote?.stuck && !attempt && q.options && (
+        <div className="flex flex-col gap-2 rounded-xl bg-gold/15 p-3 ring-1 ring-gold/50">
+          <div className="text-center font-bold text-goldlight">تعادل في تصويت الفريق</div>
+          <button className="btn btn-gold py-2" disabled={busy} onClick={() => send({ type: "tiebreak" })}>
+            ٣ ثواني إضافية للحسم
+          </button>
+          <div className="text-center text-xs text-cream/60">أو اختيار الإجابة يدوياً:</div>
+          <div className="grid grid-cols-2 gap-2">
+            {q.options.map((o, i) => (
+              <button key={i} className="btn btn-ghost px-2 py-2 text-sm" disabled={busy} onClick={() => send({ type: "team_answer", option: i })}>
+                {q.type === "TRUE_FALSE" ? "" : `${OPTION_LETTERS[i]}. `}
+                {o}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

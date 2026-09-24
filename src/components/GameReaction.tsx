@@ -1,90 +1,343 @@
 "use client";
-// Short, funny reaction overlay derived from the RESULT / GAME_OVER state.
-// Purely client-side: nothing is stored; it unmounts as soon as the phase moves on.
-import { useEffect, useMemo, useState } from "react";
+// Reaction overlay derived from the RESULT phase. Purely client-side: nothing is stored;
+// it unmounts as soon as the phase moves on (host pressing "next" cancels it instantly).
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { PublicPlayer, Team } from "@/lib/game/types";
 import { confettiBurst } from "./effects";
 import { Character } from "./ui";
 
 export type ReactionKind = "correct" | "wrong" | "steal" | "skipped";
 
-const CORRECT_STYLES = ["dance", "hype", "fly", "spin", "jump"] as const;
-const WRONG_STYLES = ["wall", "fall", "shake", "shrink"] as const;
-type Style = (typeof CORRECT_STYLES)[number] | (typeof WRONG_STYLES)[number] | "slidein" | "still";
+// ─── Shuffle bags ───────────────────────────────────────────────────────────
+// A reaction doesn't come back until most of the others in its group have played.
 
-const CORRECT_LINES = ["كفو!", "إجابة صحيحة!", "صح عليك!", "ما شاء الله!"];
-const HYPE_LINES = ["يا سلام!", "كفو!"];
-const WRONG_LINES = ["يا ساتر!", "راحت عليك", "قريبة!", "ركز شوي"];
+const BAG_KEY = "96:reaction-bags";
+type Bags = Record<string, { left: string[]; last: string | null }>;
 
-function hash(s: string) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return Math.abs(h);
+function loadBags(): Bags {
+  try {
+    return JSON.parse(localStorage.getItem(BAG_KEY) || "{}") as Bags;
+  } catch {
+    return {};
+  }
 }
 
-// Avoid showing the same animation twice in a row on this device.
-let lastStyle: Style | null = null;
+export function drawFromBag(group: string, ids: string[]): string {
+  const bags = loadBags();
+  let bag = bags[group];
+  if (!bag || bag.left.length === 0 || bag.left.some((id) => !ids.includes(id))) {
+    const fresh = ids.slice().sort(() => Math.random() - 0.5);
+    // never start a new round with the reaction that just played
+    if (bag?.last && fresh[0] === bag.last && fresh.length > 1) fresh.push(fresh.shift()!);
+    bag = { left: fresh, last: bag?.last ?? null };
+  }
+  const id = bag.left.shift()!;
+  bag.last = id;
+  bags[group] = bag;
+  try {
+    localStorage.setItem(BAG_KEY, JSON.stringify(bags));
+  } catch {}
+  return id;
+}
 
-function pickStyle(kind: ReactionKind, seed: string): Style {
-  if (kind === "steal") return "slidein";
-  if (kind === "skipped") return "still";
-  const list: readonly Style[] = kind === "correct" ? CORRECT_STYLES : WRONG_STYLES;
-  let s = list[hash(seed) % list.length];
-  if (s === lastStyle) s = list[(list.indexOf(s) + 1) % list.length];
-  lastStyle = s;
-  return s;
+const lastLine: Record<string, string> = {};
+export function pickLine(group: string, lines: string[]): string {
+  const pool = lines.length > 1 ? lines.filter((l) => l !== lastLine[group]) : lines;
+  const l = pool[Math.floor(Math.random() * pool.length)];
+  lastLine[group] = l;
+  return l;
+}
+
+// ─── Variants ───────────────────────────────────────────────────────────────
+
+type At = "head" | "face" | "hand" | "feet" | "around" | "above" | "body";
+interface Prop {
+  e?: string; // emoji
+  node?: "hole" | "ice" | "mask" | "podium" | "drops";
+  at: At;
+  cls?: string;
+  scale?: number;
+  delay?: number;
+}
+type Scene =
+  | "spotlight"
+  | "flashes"
+  | "pointsRain"
+  | "darken"
+  | "smoke"
+  | "error"
+  | "sandal"
+  | "hand"
+  | "car"
+  | "coins"
+  | "magic"
+  | "vault"
+  | "pointsFly";
+interface Variant {
+  id: string;
+  anim: string;
+  face?: string;
+  props?: Prop[];
+  scene?: Scene;
+  lines?: string[];
+  confetti?: number;
+}
+
+const CORRECT_LINES = ["كفو!", "يا سلام!", "وحش!", "سهلة!", "كذا اللعب!", "عرفها!", "يا قوي!", "ما شاء الله!", "عين عليك باردة", "صح عليك!", "أبدعت!"];
+const WRONG_LINES = ["يا ساتر!", "راحت عليك", "قريبة!", "ركز شوي", "الله يعوض", "مو اليوم", "كان عندك أمل", "وش صار؟", "أوف!", "المرة الجاية"];
+const STEAL_LINES = ["سرقوها!", "خذوها!", "راحت منكم!", "سرقة نظيفة", "شكراً على الهدية", "مع السلامة يا نقاط", "ما قصرتوا", "جاهزة ومغلفة بعد!"];
+
+const CORRECT: Variant[] = [
+  { id: "dance", anim: "rx-dance" },
+  { id: "hype", anim: "rx-hype", props: [{ e: "🕶️", at: "face", cls: "rxp-drop", delay: 250 }], lines: ["كفو!", "يا سلام!"] },
+  { id: "fly", anim: "rx-fly" },
+  { id: "rocket", anim: "rx-rocket", props: [{ e: "🚀", at: "feet", cls: "rxp-rocket" }], lines: ["وحش!", "يا قوي!"] },
+  { id: "king", anim: "rx-bob", props: [{ e: "👑", at: "head", cls: "rxp-drop", scale: 1.2 }], lines: ["يا ملك!"] },
+  { id: "pointsRain", anim: "rx-jump", scene: "pointsRain" },
+  { id: "hero", anim: "rx-walkin", scene: "spotlight", lines: ["يا قوي!", "كذا اللعب!"] },
+  { id: "celebrity", anim: "rx-pose", scene: "flashes", lines: ["عين عليك باردة", "ما شاء الله!"] },
+  { id: "spin", anim: "rx-spin", confetti: 2 },
+  { id: "micdrop", anim: "rx-walkoff", props: [{ e: "🎤", at: "hand", cls: "rxp-micdrop" }], lines: ["أبدعت!", "كذا اللعب!"] },
+  { id: "podium", anim: "rx-podium", props: [{ node: "podium", at: "feet" }], lines: ["يا بطل!", "كفو!"] },
+  { id: "glasses", anim: "rx-cool", props: [{ e: "🕶️", at: "face", cls: "rxp-drop", delay: 150 }], lines: ["سهلة!"] },
+  { id: "bighead", anim: "rx-bob", face: "rx-bighead", lines: ["عرفها!", "وحش!"] },
+  { id: "slowmo", anim: "rx-slowmo", scene: "darken", lines: ["يا سلام!", "ما شاء الله!"] },
+  { id: "superhero", anim: "rx-landing", props: [{ e: "💥", at: "feet", cls: "rxp-dust", delay: 450 }], lines: ["وحش!", "يا قوي!"] },
+  { id: "spotlightFreeze", anim: "rx-pose", scene: "spotlight", props: [{ e: "✨", at: "around", cls: "rxp-pop", delay: 300 }] },
+];
+
+const WRONG: Variant[] = [
+  { id: "wall", anim: "rx-wall" },
+  { id: "fall", anim: "rx-fall" },
+  { id: "shrink", anim: "rx-shrink" },
+  { id: "dizzy", anim: "rx-wobble", props: [{ e: "💫", at: "around", cls: "rxp-orbit" }, { e: "⭐", at: "around", cls: "rxp-orbit rxp-orbit-2" }] },
+  { id: "smoke", anim: "rx-vanish", scene: "smoke", lines: ["وش صار؟", "أوف!"] },
+  { id: "shake", anim: "rx-shake" },
+  { id: "hole", anim: "rx-sink", props: [{ node: "hole", at: "feet" }] },
+  { id: "facepalm", anim: "rx-sad", props: [{ e: "🤦", at: "face", cls: "rxp-pop", delay: 200, scale: 1.2 }], lines: ["يا ساتر!", "وش صار؟"] },
+  { id: "freeze", anim: "rx-frozen", props: [{ node: "ice", at: "body" }, { e: "❄️", at: "head", cls: "rxp-pop", delay: 300 }], lines: ["تجمّد!", "أوف!"] },
+  { id: "balloon", anim: "rx-balloon" },
+  { id: "error", anim: "rx-shake", scene: "error" },
+  { id: "pushback", anim: "rx-pushback" },
+  { id: "rain", anim: "rx-sad", props: [{ e: "🌧️", at: "above", cls: "rxp-float" }, { node: "drops", at: "above" }], lines: ["الله يعوض", "المرة الجاية"] },
+  { id: "sandal", anim: "rx-duck", scene: "sandal", lines: ["يا ساتر!", "ركز شوي"] },
+  { id: "slideoff", anim: "rx-slideoff", lines: ["مو اليوم", "المرة الجاية"] },
+];
+
+const STEAL: Variant[] = [
+  { id: "thief", anim: "rx-thief", props: [{ node: "mask", at: "face" }, { e: "💰", at: "hand", cls: "rxp-bounce" }], scene: "pointsFly" },
+  { id: "hand", anim: "rx-slidein", scene: "hand", lines: ["مع السلامة يا نقاط"] },
+  { id: "coinsRun", anim: "rx-run", props: [{ e: "🪙", at: "hand", cls: "rxp-bounce" }, { e: "🪙", at: "head", cls: "rxp-bounce" }], lines: ["سرقة نظيفة"] },
+  { id: "car", anim: "rx-carride", scene: "car" },
+  { id: "coins", anim: "rx-slidein", scene: "coins" },
+  { id: "magician", anim: "rx-pose", props: [{ e: "🎩", at: "head", cls: "rxp-drop" }], scene: "magic" },
+  { id: "tiptoe", anim: "rx-tiptoe", props: [{ e: "💰", at: "hand", cls: "rxp-bounce" }], lines: ["سرقوها!", "ما قصرتوا"] },
+  { id: "vault", anim: "rx-grab", scene: "vault", props: [{ e: "💰", at: "hand", cls: "rxp-pop", delay: 1100 }] },
+];
+
+const GROUPS: Record<Exclude<ReactionKind, "skipped">, Variant[]> = { correct: CORRECT, wrong: WRONG, steal: STEAL };
+export const REACTION_COUNTS = { correct: CORRECT.length, wrong: WRONG.length, steal: STEAL.length };
+
+// ─── Rendering ──────────────────────────────────────────────────────────────
+
+function propStyle(at: At, size: number, scale = 1): CSSProperties {
+  const fs = size * 0.36 * scale;
+  const base: CSSProperties = { position: "absolute", fontSize: fs, lineHeight: 1, zIndex: 3, pointerEvents: "none" };
+  switch (at) {
+    case "head":
+      return { ...base, top: -size * 0.18, left: "50%", marginLeft: -fs / 2 };
+    case "face":
+      return { ...base, top: size * 0.24, left: "50%", marginLeft: -fs / 2 };
+    case "hand":
+      return { ...base, top: size * 0.62, right: -size * 0.22 };
+    case "feet":
+      return { ...base, bottom: -size * 0.12, left: "50%", marginLeft: -fs / 2 };
+    case "around":
+      return { ...base, top: size * 0.05, left: "50%", marginLeft: -fs / 2 };
+    case "above":
+      return { ...base, top: -size * 0.5, left: "50%", marginLeft: -fs / 2 };
+    case "body":
+      return { ...base, inset: 0 };
+  }
+}
+
+function PropNode({ p, size }: { p: Prop; size: number }) {
+  const style: CSSProperties = { ...propStyle(p.at, size, p.scale), animationDelay: `${p.delay ?? 0}ms` };
+  if (p.node === "hole")
+    return <span className="rxp-hole" style={{ ...style, width: size * 1.1, height: size * 0.28, marginLeft: -size * 0.55, bottom: -size * 0.1, zIndex: 0 }} />;
+  if (p.node === "ice") return <span className="rxp-ice" style={{ ...style, inset: `-${size * 0.06}px` }} />;
+  if (p.node === "mask") return <span className="rxp-mask" style={{ ...style, width: size * 0.5, height: size * 0.11, marginLeft: -size * 0.25, top: size * 0.32 }} />;
+  if (p.node === "podium")
+    return (
+      <span className="rxp-podium" style={{ ...style, width: size * 1.1, height: size * 0.42, marginLeft: -size * 0.55, bottom: -size * 0.42, fontSize: size * 0.26 }}>
+        1
+      </span>
+    );
+  if (p.node === "drops")
+    return (
+      <span style={{ ...style, top: -size * 0.2, width: size * 0.6, marginLeft: -size * 0.3, height: size * 0.6, fontSize: size * 0.12 }}>
+        {[0, 1, 2, 3].map((i) => (
+          <span key={i} className="rxp-drop-fall" style={{ position: "absolute", left: `${i * 28}%`, animationDelay: `${i * 170}ms` }}>
+            💧
+          </span>
+        ))}
+      </span>
+    );
+  return (
+    <span className={p.cls} style={style}>
+      {p.e}
+    </span>
+  );
+}
+
+function SceneLayer({ scene, points, color }: { scene: Scene; points: number; color: string }) {
+  switch (scene) {
+    case "spotlight":
+      return <div className="rxs-spotlight" />;
+    case "darken":
+      return <div className="rxs-darken" />;
+    case "flashes":
+      return (
+        <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden">
+          {Array.from({ length: 10 }, (_, i) => (
+            <span
+              key={i}
+              className="rxs-flash"
+              style={{ left: `${10 + ((i * 37) % 80)}%`, top: `${15 + ((i * 53) % 60)}%`, animationDelay: `${(i * 190) % 1400}ms` }}
+            >
+              📸
+            </span>
+          ))}
+        </div>
+      );
+    case "pointsRain":
+      return (
+        <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden">
+          {Array.from({ length: 18 }, (_, i) => (
+            <span
+              key={i}
+              className="rxs-rain num font-black"
+              style={{ left: `${(i * 53) % 96}%`, animationDelay: `${(i * 137) % 1500}ms`, color }}
+            >
+              +{points}
+            </span>
+          ))}
+        </div>
+      );
+    case "smoke":
+      return <span className="rxs-smoke">💨</span>;
+    case "error":
+      return (
+        <div className="rxs-error" dir="rtl">
+          <div className="rxs-error-bar">⚠️ خطأ</div>
+          <div className="px-[2.4vmin] py-[1.6vmin] text-[2.6vmin] text-ink">
+            خطأ 404: الإجابة غير موجودة
+            <div className="mt-[1.2vmin] flex justify-center">
+              <span className="rounded-md bg-sky px-[2vmin] py-[0.4vmin] text-[2.2vmin] font-bold text-white">حسناً 😅</span>
+            </div>
+          </div>
+        </div>
+      );
+    case "sandal":
+      return <span className="rxs-sandal">🩴</span>;
+    case "hand":
+      return (
+        <span className="rxs-hand">
+          ✋<span className="num rxs-hand-pts" style={{ color }}>+{points}</span>
+        </span>
+      );
+    case "car":
+      return <span className="rxs-car">🚗💨</span>;
+    case "coins":
+      return (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[12%] z-[1] h-[10vmin] overflow-hidden">
+          {Array.from({ length: 9 }, (_, i) => (
+            <span key={i} className="rxs-coin" style={{ animationDelay: `${i * 140}ms` }}>
+              🪙
+            </span>
+          ))}
+        </div>
+      );
+    case "magic":
+      return (
+        <>
+          <span className="rxs-magic-poof">✨</span>
+          <span className="rxs-magic-pts num" style={{ color }}>
+            +{points}
+          </span>
+        </>
+      );
+    case "vault":
+      return (
+        <div className="rxs-vault">
+          <div className="rxs-vault-door">🔐</div>
+        </div>
+      );
+    case "pointsFly":
+      return (
+        <span className="rxs-pointsfly num" style={{ color }}>
+          +{points}
+        </span>
+      );
+  }
 }
 
 export function GameReaction({
   kind,
-  seed,
   players,
   team,
   points,
   answer,
+  streak = 0,
   surface = "tv",
-  durationMs = 2800,
+  durationMs,
 }: {
   kind: ReactionKind;
-  /** stable per result (e.g. question id) so TV and phones pick consistently */
-  seed: string;
+  /** kept for API compatibility (older callers) */
+  seed?: string;
   players: PublicPlayer[];
   team: Team;
   points: number;
   answer?: string;
+  /** consecutive correct answers of the scoring team (after this one) */
+  streak?: number;
   surface?: "tv" | "phone";
   durationMs?: number;
 }) {
-  const style = useMemo(() => pickStyle(kind, seed), [kind, seed]);
+  const variant = useMemo<Variant | null>(() => {
+    if (kind === "skipped") return null;
+    const list = GROUPS[kind];
+    const id = drawFromBag(`${surface}:${kind}`, list.map((v) => v.id));
+    return list.find((v) => v.id === id) ?? list[0];
+  }, [kind, surface]);
   const title = useMemo(() => {
-    const h = hash(seed + "t");
-    if (kind === "steal") return "سرقوها!";
     if (kind === "skipped") return "تم التخطي";
-    if (kind === "wrong") return WRONG_LINES[h % WRONG_LINES.length];
-    if (style === "hype") return HYPE_LINES[h % HYPE_LINES.length];
-    return CORRECT_LINES[h % CORRECT_LINES.length];
-  }, [kind, seed, style]);
+    const lines = variant?.lines ?? (kind === "correct" ? CORRECT_LINES : kind === "wrong" ? WRONG_LINES : STEAL_LINES);
+    return pickLine(kind, lines);
+  }, [kind, variant]);
+  const total = durationMs ?? (kind === "steal" ? 3600 : 2800);
   const [show, setShow] = useState(true);
 
   useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = [setTimeout(() => setShow(false), durationMs)];
+    const timers: ReturnType<typeof setTimeout>[] = [setTimeout(() => setShow(false), total)];
     const strength = surface === "phone" ? 0.5 : 1;
     if (kind === "correct") {
       confettiBurst(strength);
-      if (style === "spin") timers.push(setTimeout(() => confettiBurst(strength), 1000));
+      if ((variant?.confetti ?? 0) > 1) timers.push(setTimeout(() => confettiBurst(strength), 1000));
     }
     if (kind === "steal") {
-      timers.push(setTimeout(() => confettiBurst(1.4 * strength), 350));
-      timers.push(setTimeout(() => confettiBurst(strength), 1100));
+      timers.push(setTimeout(() => confettiBurst(1.4 * strength), 400));
+      timers.push(setTimeout(() => confettiBurst(strength), 1300));
     }
     return () => timers.forEach(clearTimeout);
-  }, [kind, style, surface, durationMs]);
+  }, [kind, variant, surface, total]);
 
   if (!show) return null;
   const tv = surface === "tv";
   const good = kind === "correct" || kind === "steal";
   const shown = players.slice(0, tv ? 5 : 1);
-  const charSize = tv ? Math.round(window.innerHeight * (shown.length > 3 ? 0.17 : 0.22)) : 150;
+  const size = tv ? Math.round(window.innerHeight * (shown.length > 3 ? 0.17 : 0.22)) : 150;
+  const streakLine = kind !== "wrong" && kind !== "skipped" ? (streak >= 5 ? "ما يوقفون! 🔥🔥" : streak === 3 ? "مولعين! 🔥" : null) : null;
 
   return (
     <div
@@ -93,10 +346,12 @@ export function GameReaction({
       }`}
       style={{ gap: tv ? "3vmin" : 16 }}
     >
-      <div className="anim-stamp text-center" style={{ animationDelay: kind === "steal" ? "300ms" : undefined }}>
+      {variant?.scene && <SceneLayer scene={variant.scene} points={points} color={team.color} />}
+
+      <div className="anim-stamp relative z-[2] text-center" style={{ animationDelay: kind === "steal" ? "300ms" : undefined }}>
         <div
-          className={`font-black leading-none ${good ? "text-goldlight" : "text-cream"}`}
-          style={{ fontSize: tv ? (kind === "steal" ? "13vmin" : "10vmin") : 44 }}
+          className={`leading-none font-black ${good ? "text-goldlight" : "text-cream"}`}
+          style={{ fontSize: tv ? (kind === "steal" ? "12vmin" : "10vmin") : 44 }}
         >
           {title}
         </div>
@@ -105,34 +360,34 @@ export function GameReaction({
             +{points}
           </div>
         )}
+        {streakLine && (
+          <div className="anim-pop mt-[1vmin] font-black text-[#ff9b4a]" style={{ fontSize: tv ? "5vmin" : 24, animationDelay: "500ms" }}>
+            {streakLine}
+          </div>
+        )}
       </div>
 
-      {shown.length > 0 && kind !== "skipped" && (
-        <div className="flex items-end justify-center" style={{ gap: tv ? "3vmin" : 12 }}>
+      {variant && shown.length > 0 && (
+        <div className="relative z-[2] flex items-end justify-center" style={{ gap: tv ? "4vmin" : 12 }}>
           {shown.map((p, i) => (
-            <div
-              key={p.id}
-              className={`rx-${style}`}
-              style={{ animationDelay: `${style === "slidein" ? i * 90 : i * 120}ms` }}
-            >
-              <Character player={p} color={team.color} size={charSize} />
+            <div key={p.id} className={variant.anim} style={{ animationDelay: `${i * 110}ms` }}>
+              <Character player={p} color={team.color} size={size} faceClassName={variant.face}>
+                {variant.props?.map((pr, j) => <PropNode key={j} p={pr} size={size} />)}
+              </Character>
             </div>
           ))}
         </div>
       )}
 
       {answer && (
-        <div
-          className="anim-rise rounded-[2vmin] bg-deep/90 px-[3vmin] py-[1.4vmin] text-center"
-          style={{ animationDelay: "400ms" }}
-        >
+        <div className="anim-rise relative z-[2] rounded-[2vmin] bg-deep/90 px-[3vmin] py-[1.4vmin] text-center" style={{ animationDelay: "400ms" }}>
           <span className="text-[2.6vmin] text-cream/60">الإجابة: </span>
           <span className="text-[4vmin] font-bold text-goldlight">{answer}</span>
         </div>
       )}
 
       <span
-        className="rounded-full px-4 py-1 font-bold"
+        className="relative z-[2] rounded-full px-4 py-1 font-bold"
         style={{ background: `${team.color}33`, boxShadow: `inset 0 0 0 2px ${team.color}`, fontSize: tv ? "3vmin" : 16 }}
       >
         {team.name}
@@ -140,3 +395,74 @@ export function GameReaction({
     </div>
   );
 }
+
+// ─── Winner / loser pieces for the finale ───────────────────────────────────
+
+const WINNER_STYLES: { id: string; anim: string; props?: Prop[] }[] = [
+  { id: "crowns", anim: "rx-bob", props: [{ e: "👑", at: "head", cls: "rxp-drop", scale: 1.2 }] },
+  { id: "glasses", anim: "rx-dance", props: [{ e: "🕶️", at: "face", cls: "rxp-drop" }] },
+  { id: "podium", anim: "rx-podium", props: [{ node: "podium", at: "feet" }] },
+  { id: "jump", anim: "rx-jump-loop" },
+  { id: "trophy", anim: "rx-hype", props: [{ e: "🏆", at: "hand", cls: "rxp-pop" }] },
+];
+
+const LOSER_STYLES: { id: string; anim: string; props?: Prop[] }[] = [
+  { id: "tears", anim: "rx-sad", props: [{ e: "😢", at: "face", cls: "rxp-pop", scale: 1.1 }] },
+  { id: "rain", anim: "rx-sad", props: [{ e: "🌧️", at: "above", cls: "rxp-float" }, { node: "drops", at: "above" }] },
+  { id: "flag", anim: "rx-sad", props: [{ e: "🏳️", at: "hand", cls: "rxp-flagfall" }] },
+  { id: "sit", anim: "rx-sitdown" },
+  { id: "shrink", anim: "rx-shrink-stay" },
+  { id: "walkoff", anim: "rx-slideoff" },
+  { id: "tinyTrophy", anim: "rx-bob", props: [{ e: "🏆", at: "hand", cls: "rxp-pop", scale: 0.45 }] },
+];
+const LOSER_LINES = ["خيرها بغيرها", "المرة الجاية", "شدوا حيلكم", "كانت قريبة", "تعوضونها"];
+
+export function WinnerCrew({ players, color, size }: { players: PublicPlayer[]; color: string; size: number }) {
+  const style = useMemo(() => {
+    const id = drawFromBag("winner", WINNER_STYLES.map((s) => s.id));
+    return WINNER_STYLES.find((s) => s.id === id)!;
+  }, []);
+  // end on a photo-worthy freeze pose
+  const [frozen, setFrozen] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setFrozen(true), 6500);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="flex flex-wrap items-end justify-center gap-[3vmin]">
+      {players.map((p, i) => (
+        <div key={p.id} className={frozen ? "" : style.anim} style={{ animationDelay: `${i * 150}ms`, animationIterationCount: "infinite" }}>
+          <Character player={p} color={color} size={size}>
+            {style.props?.map((pr, j) => <PropNode key={j} p={pr} size={size} />)}
+          </Character>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function LoserCrew({ players, team, size }: { players: PublicPlayer[]; team: Team; size: number }) {
+  const style = useMemo(() => {
+    const id = drawFromBag("loser", LOSER_STYLES.map((s) => s.id));
+    return LOSER_STYLES.find((s) => s.id === id)!;
+  }, []);
+  const line = useMemo(() => pickLine("loser", LOSER_LINES), []);
+  return (
+    <div className="anim-rise flex items-end gap-[2vmin] rounded-[2vmin] bg-ink/60 px-[2.4vmin] py-[1.4vmin]">
+      <div className="flex flex-col items-center">
+        <span className="font-bold" style={{ color: team.color, fontSize: "2.8vmin" }}>
+          {team.name}
+        </span>
+        <span className="text-[2.6vmin] text-cream/80">{line}</span>
+      </div>
+      {players.slice(0, 4).map((p, i) => (
+        <div key={p.id} className={style.anim} style={{ animationDelay: `${i * 120}ms` }}>
+          <Character player={p} color={team.color} size={size} showName={false}>
+            {style.props?.map((pr, j) => <PropNode key={j} p={pr} size={size} />)}
+          </Character>
+        </div>
+      ))}
+    </div>
+  );
+}
+

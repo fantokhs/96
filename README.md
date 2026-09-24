@@ -10,7 +10,7 @@ A real-time family party game for gatherings. The TV is the stage, every phone i
 - **Content manager**: `/admin/content`, protected by a PIN.
 - **Test bench**: `/dev/CODE` shows the TV and 4 phones on one screen.
 
-Version: **V1.3**
+Version: **V1.4**
 
 ---
 

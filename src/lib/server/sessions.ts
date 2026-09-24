@@ -41,8 +41,13 @@ export async function loadSession(code: string): Promise<SessionRecord> {
   return rec;
 }
 
+/** Host access: the creator's token, or the shared control PIN (/control/CODE). */
 export function assertHost(rec: SessionRecord, token: string | null | undefined) {
-  if (!token || !safeEqual(hashToken(token), rec.hostTokenHash)) throw new GameError("غير مصرح", 401);
+  if (!token) throw new GameError("غير مصرح", 401);
+  if (safeEqual(hashToken(token), rec.hostTokenHash)) return;
+  const pin = process.env.HOST_PIN || "9696";
+  if (safeEqual(token, pin)) return;
+  throw new GameError("الرمز غير صحيح", 401);
 }
 
 export function assertPlayer(game: Game, playerId: string, token: string) {
@@ -57,6 +62,7 @@ export function assertPlayer(game: Game, playerId: string, token: string) {
 export async function mutate(
   code: string,
   fn: (game: Game, rec: SessionRecord) => Game | null,
+  opts: { silent?: boolean } = {},
 ): Promise<{ game: Game; version: number; changed: boolean }> {
   const store = getStore();
   const c = normalizeCode(code);
@@ -65,7 +71,8 @@ export async function mutate(
     const next = fn(rec.game, rec);
     if (!next) return { game: rec.game, version: rec.version, changed: false };
     if (await store.updateSession(c, rec.version, next)) {
-      await notify(c, rec.version + 1);
+      // silent writes (heartbeats) don't make every screen refetch
+      if (!opts.silent) await notify(c, rec.version + 1);
       return { game: next, version: rec.version + 1, changed: true };
     }
     await new Promise((r) => setTimeout(r, 15 + Math.random() * 40 * (attempt + 1)));

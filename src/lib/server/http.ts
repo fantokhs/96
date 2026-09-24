@@ -5,6 +5,11 @@ import type { Game } from "../game/types";
 import { toHost, toPublic } from "../game/views";
 import { getStore } from "./store";
 
+/** Shared control PIN for /control/CODE (family game: simple by design). */
+export function hostPin() {
+  return process.env.HOST_PIN || "9696";
+}
+
 export const noStore = { "Cache-Control": "no-store" };
 
 export function json(data: unknown, status = 200) {
@@ -32,6 +37,6 @@ export async function body<T>(req: Request): Promise<T> {
 export function view(game: Game, version: number, role: "host" | "public") {
   const now = Date.now();
   const rt = getStore().kind === "supabase" && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "supabase" : "sse";
-  const v = role === "host" ? toHost(game, version, now) : toPublic(game, version, now);
+  const v = role === "host" ? toHost(game, version, now, hostPin()) : toPublic(game, version, now);
   return { ...v, rt } as const;
 }

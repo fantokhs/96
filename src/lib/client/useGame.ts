@@ -130,17 +130,28 @@ export function useTickDriver(game: PublicGame | null, now: () => number, jitter
   useEffect(() => {
     if (!game || game.paused) return;
     const p = game.phase;
-    if (p.name !== "CATEGORY_VOTE" && p.name !== "CARD_PICK" && p.name !== "RESULT") return;
+    const timed =
+      p.name === "CATEGORY_VOTE" ||
+      p.name === "CARD_PICK" ||
+      p.name === "RESULT" ||
+      // team-vote expiry (plurality / tie-break)
+      ((p.name === "QUESTION" || p.name === "STEAL") && !!p.teamVote && !p.attempt && !p.teamVote.stuck);
+    if (!timed) return;
     const endsAt = p.timer.endsAt;
     if (endsAt === null) return;
     let stop = false;
+    let misses = 0;
     let t: ReturnType<typeof setTimeout>;
     const fire = async () => {
       if (stop) return;
       try {
-        await api(`/api/sessions/${game.code}/act`, { json: { role: "system", action: { type: "tick" } } });
+        const r = await api<{ changed: boolean }>(`/api/sessions/${game.code}/act`, {
+          json: { role: "system", action: { type: "tick" } },
+        });
+        if (!r.changed) misses++;
       } catch {}
-      if (!stop) t = setTimeout(fire, 1500); // keep nudging until the phase moves on
+      // keep nudging a little (clock skew), then let the next state change re-arm us
+      if (!stop && misses < 4) t = setTimeout(fire, 1500);
     };
     t = setTimeout(fire, Math.max(0, endsAt - now()) + 150 + Math.random() * jitterMs);
     return () => {
@@ -148,4 +159,16 @@ export function useTickDriver(game: PublicGame | null, now: () => number, jitter
       clearTimeout(t);
     };
   }, [game?.version, game?.paused, game?.code, game?.phase, now, jitterMs]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+/** Milliseconds until `at` on the server clock, re-rendering ~10×/s while > 0. */
+export function useUntil(at: number | null | undefined, now: () => number) {
+  const [, force] = useState(0);
+  const left = at ? Math.max(0, at - now()) : 0;
+  useEffect(() => {
+    if (!at || at - now() <= 0) return;
+    const id = setInterval(() => force((x) => x + 1), 100);
+    return () => clearInterval(id);
+  }, [at, now, left > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+  return left;
 }

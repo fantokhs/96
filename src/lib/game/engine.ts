@@ -13,6 +13,7 @@ import type {
   Settings,
   Team,
   Timer,
+  UndoSnapshot,
 } from "./types";
 
 export class GameError extends Error {
@@ -27,6 +28,15 @@ export const VOTE_MS = 20_000;
 export const TIE_MS = 10_000;
 export const PICK_MS = 20_000;
 export const RESULT_MS = 5_500;
+/** 3-2-1 before answers/buzzes are accepted (protects against carry-over taps) */
+export const PREP_MS = 3_000;
+export const STEAL_PREP_MS = 2_000;
+export const REOPEN_PREP_MS = 1_500;
+export const TIEBREAK_MS = 3_000;
+/** a player counts as connected if their phone pinged within this window */
+export const ONLINE_MS = 45_000;
+/** heartbeat writes are skipped if the last one is fresher than this */
+export const PING_WRITE_MS = 20_000;
 
 export type Rng = () => number;
 
@@ -110,6 +120,16 @@ export function optionsOf(q: Question): string[] | null {
 
 export function teamMembers(g: Game, teamId: string): Player[] {
   return g.players.filter((p) => p.teamId === teamId);
+}
+
+export function isOnline(p: Player, now: number): boolean {
+  return !!p.lastSeen && now - p.lastSeen < ONLINE_MS;
+}
+
+/** True when a heartbeat should be written for this player. */
+export function needsPing(g: Game, playerId: string, now: number): boolean {
+  const p = g.players.find((x) => x.id === playerId);
+  return !!p && (!p.lastSeen || now - p.lastSeen >= PING_WRITE_MS);
 }
 
 function smallestTeam(g: Game, rng: Rng): Team {
@@ -212,6 +232,7 @@ export function addPlayer(prev: Game, input: JoinInput, now: number, rng: Rng = 
     avatarUrl: input.avatarUrl,
     teamId,
     joinedAt: now,
+    lastSeen: now,
   });
   emit(g, { kind: "join", playerId: input.id, teamId });
   return g;
@@ -286,9 +307,14 @@ function flipCard(g: Game, index: number, now: number) {
     categoryId,
     cardIndex: index,
     questionId: card.questionId,
-    timer: newTimer(g.settings.questionSeconds * 1000, now, g.paused),
+    // the clock starts after the 3-2-1 prep
+    timer: newTimer(g.settings.questionSeconds * 1000, now + PREP_MS, g.paused),
     buzzer: buzzer ? { lockedBy: null, excludedTeamIds: [] } : null,
     attempt: null,
+    readyAt: now + PREP_MS,
+    votes: {},
+    tie: false,
+    stuck: false,
   };
   emit(g, { kind: "flip", teamId });
 }
@@ -300,6 +326,9 @@ function finish(g: Game, outcome: Outcome, scorer: string | null, points: number
   const card = g.boards[p.categoryId]?.[p.cardIndex];
   if (card) card.outcome = outcome;
   if (scorer && points > 0) team(g, scorer).score += points;
+  const streaks = (g.streaks ??= {});
+  if (scorer && points > 0) streaks[scorer] = (streaks[scorer] ?? 0) + 1;
+  if (activeTeamId !== scorer) streaks[activeTeamId] = 0;
   g.phase = {
     name: "RESULT",
     outcome,
@@ -345,7 +374,8 @@ function markWrong(g: Game, now: number) {
     const eligible = g.teams.filter((t) => !excluded.includes(t.id));
     if (eligible.length === 0) return finish(g, "wrong", null, 0, now);
     p.buzzer = { lockedBy: null, excludedTeamIds: excluded };
-    p.timer = newTimer(g.settings.stealSeconds * 1000, now, g.paused);
+    p.readyAt = now + REOPEN_PREP_MS;
+    p.timer = newTimer(g.settings.stealSeconds * 1000, now + REOPEN_PREP_MS, g.paused);
     emit(g, { kind: "wrong", teamId: locked.teamId });
     return;
   }
@@ -367,12 +397,141 @@ function startSteal(g: Game, now: number, teamId?: string) {
     categoryId: p.categoryId,
     cardIndex: p.cardIndex,
     questionId: p.questionId,
-    timer: newTimer(g.settings.stealSeconds * 1000, now, g.paused),
+    timer: newTimer(g.settings.stealSeconds * 1000, now + STEAL_PREP_MS, g.paused),
     attempt: null,
     excludedOption: p.attempt ? p.attempt.option : null,
+    readyAt: now + STEAL_PREP_MS,
+    votes: {},
+    tie: false,
+    stuck: false,
   };
   emit(g, { kind: "steal", teamId: target.id, points: 0 });
 }
+
+// ─── Team consensus answering ───────────────────────────────────────────────
+
+type AnswerPhase = Extract<Phase, { name: "QUESTION" | "STEAL" }>;
+
+function answerPhase(g: Game): AnswerPhase {
+  const p = g.phase;
+  if ((p.name !== "QUESTION" && p.name !== "STEAL") || (p.name === "QUESTION" && p.buzzer))
+    throw new GameError("لا يوجد تصويت على إجابة الآن");
+  return p;
+}
+
+/** Lock the team's answer (once) and judge it like before. */
+function lockAnswer(g: Game, option: number, playerId: string, now: number) {
+  const p = answerPhase(g);
+  if (p.attempt) throw new GameError("تم اعتماد إجابة الفريق");
+  const q = questionOf(g, p.questionId);
+  const correct = option === q.correctOption;
+  p.attempt = { playerId, option, correct };
+  p.timer = stopTimer(p.timer, now);
+  p.tie = false;
+  p.stuck = false;
+  if (correct) {
+    finish(g, p.name === "STEAL" ? "steal" : "correct", p.teamId, p.name === "STEAL" ? g.settings.stealPoints : questionPoints(g, q), now);
+  } else if (p.name === "STEAL") {
+    finish(g, "wrong", null, 0, now);
+  } else {
+    emit(g, { kind: "wrong", teamId: p.teamId, playerId });
+  }
+}
+
+export function voteCounts(p: { votes?: Record<string, number> }): Record<number, number> {
+  const counts: Record<number, number> = {};
+  for (const o of Object.values(p.votes ?? {})) counts[o] = (counts[o] ?? 0) + 1;
+  return counts;
+}
+
+/** Connected active-team players (voters always count as connected). */
+export function votingPool(g: Game, teamId: string, votes: Record<string, number> | undefined, now: number): number {
+  const members = teamMembers(g, teamId);
+  const n = members.filter((m) => isOnline(m, now) || (votes && m.id in votes)).length;
+  return Math.max(1, n);
+}
+
+/** Majority = more than half of connected active-team players. */
+export function majorityNeeded(pool: number) {
+  return Math.floor(pool / 2) + 1;
+}
+
+function checkMajority(g: Game, now: number, lastVoter: string) {
+  const p = answerPhase(g);
+  const need = majorityNeeded(votingPool(g, p.teamId, p.votes, now));
+  for (const [opt, n] of Object.entries(voteCounts(p))) {
+    if (n >= need) return lockAnswer(g, Number(opt), lastVoter, now);
+  }
+}
+
+/** Timer ran out without a majority: plurality wins, a tie gets 3 more seconds, then waits for the host. */
+function resolveTeamVote(g: Game, now: number) {
+  const p = answerPhase(g);
+  const counts = voteCounts(p);
+  const max = Math.max(0, ...Object.values(counts));
+  if (max === 0) return false; // nobody voted: host decides
+  const leaders = Object.keys(counts).filter((o) => counts[Number(o)] === max);
+  if (leaders.length === 1) {
+    const voter = Object.keys(p.votes ?? {}).find((id) => p.votes![id] === Number(leaders[0])) ?? "";
+    lockAnswer(g, Number(leaders[0]), voter, now);
+    return true;
+  }
+  if (!p.tie) {
+    p.tie = true;
+    p.timer = newTimer(TIEBREAK_MS, now, g.paused);
+    emit(g, { kind: "tie", teamId: p.teamId });
+  } else {
+    p.stuck = true;
+    p.timer = stopTimer(p.timer, now);
+  }
+  return true;
+}
+
+// ─── Undo ───────────────────────────────────────────────────────────────────
+
+function snapshot(prev: Game, now: number): UndoSnapshot {
+  return structuredClone({
+    at: now,
+    teams: prev.teams,
+    turn: prev.turn,
+    boards: prev.boards,
+    usedQuestionIds: prev.usedQuestionIds,
+    phase: prev.phase,
+    paused: prev.paused,
+    streaks: prev.streaks ?? {},
+  });
+}
+
+function restore(g: Game, snap: UndoSnapshot, now: number) {
+  const delta = now - snap.at;
+  const phase = structuredClone(snap.phase) as Phase & { timer?: Timer; readyAt?: number };
+  // shift running clocks so the restored step gets the time it had left
+  if (phase.timer && phase.timer.endsAt !== null) phase.timer.endsAt += delta;
+  if (typeof phase.readyAt === "number") phase.readyAt += delta;
+  g.teams = snap.teams;
+  g.turn = snap.turn;
+  g.boards = snap.boards;
+  g.usedQuestionIds = snap.usedQuestionIds;
+  g.phase = phase;
+  g.paused = snap.paused;
+  g.streaks = snap.streaks;
+  g.undo = null;
+  emit(g, { kind: "undo" });
+}
+
+const UNDOABLE = new Set<HostAction["type"]>([
+  "correct",
+  "wrong",
+  "steal",
+  "skip",
+  "next",
+  "cancel_question",
+  "adjust_score",
+  "end_game",
+  "team_answer",
+  "override_category",
+  "pick_card",
+]);
 
 function resolveVote(g: Game, now: number, rng: Rng, force: boolean) {
   const p = g.phase;
@@ -525,6 +684,8 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
       g.turn = { activeTeamIndex: 0, questionsPlayed: 0, currentCategoryId: null, categoryUsesLeft: 0 };
       g.boards = {};
       g.paused = false;
+      g.streaks = {};
+      g.undo = null;
       // Keep used questions out so the rematch feels fresh; recycle if the pool runs dry.
       if (availableCategories(g).length === 0) g.usedQuestionIds = [];
       g.phase = { name: "LOBBY" };
@@ -536,12 +697,51 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
       break;
     case "sfx":
       // Soundboard only: emits an event for the TV, no game-state change.
-      if (!["laugh", "whistle", "crackers"].includes(action.name)) throw new GameError("مؤثر غير معروف");
+      if (!["laugh", "whistle", "crackers", "drums", "ooh", "applause"].includes(action.name))
+        throw new GameError("مؤثر غير معروف");
       emit(g, { kind: "sfx", sfx: action.name });
       break;
+    case "undo": {
+      if (!prev.undo) throw new GameError("لا توجد حركة للتراجع عنها");
+      restore(g, prev.undo, now);
+      return g;
+    }
+    case "add_time": {
+      const t = (p as Phase & { timer?: Timer }).timer;
+      if (!t || p.name === "RESULT") throw new GameError("لا يوجد وقت لإضافته");
+      const ms = Math.max(1, Math.min(60, Math.round(action.seconds))) * 1000;
+      const ph = p as Phase & { timer: Timer; stuck?: boolean };
+      if (t.stopped) {
+        if (!ph.stuck) throw new GameError("تم اعتماد الإجابة");
+        ph.stuck = false;
+        ph.timer = newTimer(ms, now, g.paused);
+      } else if (t.endsAt !== null) {
+        ph.timer = { ...t, endsAt: Math.max(t.endsAt, now) + ms, durationMs: Math.max(t.durationMs, Math.max(t.endsAt, now) + ms - now) };
+      } else {
+        ph.timer = { ...t, remainingMs: (t.remainingMs ?? 0) + ms, durationMs: t.durationMs + ms };
+      }
+      break;
+    }
+    case "tiebreak": {
+      const ap = answerPhase(g);
+      if (ap.attempt) throw new GameError("تم اعتماد إجابة الفريق");
+      ap.tie = true;
+      ap.stuck = false;
+      ap.timer = newTimer(TIEBREAK_MS, now, g.paused);
+      emit(g, { kind: "tie", teamId: ap.teamId });
+      break;
+    }
+    case "team_answer": {
+      const q = questionOf(g, answerPhase(g).questionId);
+      const opts = optionsOf(q);
+      if (!opts || action.option < 0 || action.option >= opts.length) throw new GameError("خيار غير صالح");
+      lockAnswer(g, action.option, "", now);
+      break;
+    }
     default:
       throw new GameError("أمر غير معروف");
   }
+  if (UNDOABLE.has(action.type)) g.undo = snapshot(prev, now);
   return g;
 }
 
@@ -549,8 +749,11 @@ export function applyPlayer(prev: Game, playerId: string, action: PlayerAction, 
   const g = structuredClone(prev);
   const me = g.players.find((x) => x.id === playerId);
   if (!me) throw new GameError("لست ضمن هذه الجلسة", 403);
+  me.lastSeen = now;
   const p = g.phase;
   switch (action.type) {
+    case "ping":
+      break;
     case "choose_team": {
       if (p.name !== "LOBBY") throw new GameError("لا يمكن تغيير الفريق بعد بدء اللعبة");
       me.teamId = action.teamId ? team(g, action.teamId).id : smallestTeam(g, rng).id;
@@ -571,36 +774,29 @@ export function applyPlayer(prev: Game, playerId: string, action: PlayerAction, 
       break;
     }
     case "answer": {
+      // A tap is this player's VOTE; the team answer locks on a majority.
       if (p.name !== "QUESTION" && p.name !== "STEAL") throw new GameError("لا يوجد سؤال");
       if (p.name === "QUESTION" && p.buzzer) throw new GameError("اضغط الزر أولاً");
       if (me.teamId !== p.teamId) throw new GameError("ليس دور فريقك");
-      if (p.attempt) throw new GameError("تم إرسال إجابة فريقك");
+      if (p.attempt) throw new GameError("تم اعتماد إجابة الفريق");
+      if (g.paused) throw new GameError("اللعبة متوقفة");
+      if (p.readyAt && now < p.readyAt) throw new GameError("استعدوا… انتظر «جاوب الآن»");
+      if (p.stuck) throw new GameError("المضيف يحسم التعادل");
       const q = questionOf(g, p.questionId);
       const opts = optionsOf(q);
       if (!opts || action.option < 0 || action.option >= opts.length) throw new GameError("خيار غير صالح");
       if (p.name === "STEAL" && p.excludedOption === action.option) throw new GameError("هذا الخيار مستبعد");
-      const correct = action.option === q.correctOption;
-      p.attempt = { playerId: me.id, option: action.option, correct };
-      p.timer = stopTimer(p.timer, now);
-      if (correct) {
-        finish(
-          g,
-          p.name === "STEAL" ? "steal" : "correct",
-          p.teamId,
-          p.name === "STEAL" ? g.settings.stealPoints : questionPoints(g, q),
-          now,
-        );
-      } else if (p.name === "STEAL") {
-        finish(g, "wrong", null, 0, now);
-      } else {
-        emit(g, { kind: "wrong", teamId: p.teamId, playerId: me.id });
-      }
+      (p.votes ??= {})[me.id] = action.option;
+      checkMajority(g, now, me.id);
+      const cur = g.phase as Phase & { attempt?: unknown };
+      if (g.phase.name !== p.name || cur.attempt) g.undo = snapshot(prev, now);
       break;
     }
     case "buzz": {
       if (p.name !== "QUESTION" || !p.buzzer) throw new GameError("الزر غير متاح");
       if (g.paused) throw new GameError("اللعبة متوقفة");
       if (p.buzzer.lockedBy) throw new GameError("سبقك أحد!");
+      if (p.readyAt && now < p.readyAt) throw new GameError("انتظر «انطلق!»");
       if (!me.teamId || p.buzzer.excludedTeamIds.includes(me.teamId)) throw new GameError("فريقك خارج هذه المحاولة");
       p.buzzer.lockedBy = { playerId: me.id, teamId: me.teamId, at: now };
       p.timer = stopTimer(p.timer, now);
@@ -633,6 +829,20 @@ export function applyTick(prev: Game, now: number, rng: Rng = Math.random): Game
     const free = board.map((c, i) => (c.used ? -1 : i)).filter((i) => i >= 0);
     if (free.length === 0) startTurn(g, now, rng);
     else flipCard(g, free[Math.floor(rng() * free.length)], now);
+    return g;
+  }
+  if (
+    (p.name === "QUESTION" || p.name === "STEAL") &&
+    !(p.name === "QUESTION" && p.buzzer) &&
+    !p.attempt &&
+    !p.stuck &&
+    expired(p.timer, now) &&
+    optionsOf(questionOf(prev, p.questionId))
+  ) {
+    const g = structuredClone(prev);
+    if (!resolveTeamVote(g, now)) return null;
+    const cur = g.phase as Phase & { attempt?: unknown };
+    if (g.phase.name !== p.name || cur.attempt) g.undo = snapshot(prev, now);
     return g;
   }
   if (p.name === "RESULT" && expired(p.timer, now)) {

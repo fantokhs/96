@@ -1,7 +1,7 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
 import { confettiBurst, fireworks } from "@/components/effects";
-import { GameReaction } from "@/components/GameReaction";
+import { GameReaction, LoserCrew, WinnerCrew } from "@/components/GameReaction";
 import { patternBg } from "@/components/patterns";
 import {
   Avatar,
@@ -20,7 +20,7 @@ import {
   type CharacterAction,
 } from "@/components/ui";
 import { sfx } from "@/lib/client/sound";
-import { useGame, useTickDriver } from "@/lib/client/useGame";
+import { useGame, useTickDriver, useUntil } from "@/lib/client/useGame";
 import { useGameSounds } from "@/lib/client/useGameSounds";
 import type { PublicCategory, PublicGame, PublicPhase, PublicQuestion, Team } from "@/lib/game/types";
 
@@ -234,9 +234,35 @@ function TopBar({ game }: { game: PublicGame }) {
   );
 }
 
+/** Animates a number from its previous value to the new one (~500ms). */
+function useCountUp(value: number, ms = 520) {
+  const [shown, setShown] = useState(value);
+  const from = useRef(value);
+  useEffect(() => {
+    const start = from.current;
+    if (start === value) return;
+    const t0 = performance.now();
+    let raf = 0;
+    const step = (t: number) => {
+      const k = Math.min(1, (t - t0) / ms);
+      const eased = 1 - Math.pow(1 - k, 3);
+      setShown(Math.round(start + (value - start) * eased));
+      if (k < 1) raf = requestAnimationFrame(step);
+      else from.current = value;
+    };
+    raf = requestAnimationFrame(step);
+    return () => {
+      cancelAnimationFrame(raf);
+      from.current = value;
+    };
+  }, [value, ms]);
+  return shown;
+}
+
 function ScorePill({ team, active }: { team: Team; active: boolean }) {
   const [bump, setBump] = useState(false);
   const prev = useRef(team.score);
+  const shown = useCountUp(team.score);
   useEffect(() => {
     if (team.score !== prev.current) {
       prev.current = team.score;
@@ -255,7 +281,7 @@ function ScorePill({ team, active }: { team: Team; active: boolean }) {
       }}
     >
       <span className="text-[2.8vmin] font-bold">{team.name}</span>
-      <span className={`num text-[3.6vmin] font-bold ${bump ? "anim-pop" : ""}`}>{team.score}</span>
+      <span className={`num text-[3.6vmin] font-bold ${bump ? "anim-pop" : ""}`}>{shown}</span>
     </div>
   );
 }
@@ -278,6 +304,12 @@ function Stage({ game, now }: { game: PublicGame; now: () => number }) {
   }
 }
 
+/** Occasionally (every other turn) flag a tight race: top two within 100 points. */
+function closeRace(game: PublicGame) {
+  const s = game.teams.map((t) => t.score).sort((a, b) => b - a);
+  return s[0] > 0 && s[0] - s[1] <= 100 && game.turn.questionsPlayed >= 2 && game.turn.questionsPlayed % 2 === 0;
+}
+
 function catOf(game: PublicGame, id: string): PublicCategory {
   return game.categories.find((c) => c.id === id) ?? { id, name: "", color: "#22A06B", pattern: "star", mode: "normal" };
 }
@@ -298,6 +330,9 @@ function VoteStage({ game, phase, now }: { game: PublicGame; phase: Phase<"CATEG
         </div>
         <TimerRing timer={phase.timer} now={now} size={Math.round(window.innerHeight * 0.11)} />
       </div>
+      {closeRace(game) && (
+        <div className="anim-stamp rounded-full bg-[#e0592a] px-[3vmin] py-[0.8vmin] text-[3.4vmin] font-black">المنافسة ولعت! 🔥</div>
+      )}
 
       {phase.tie && (
         <div className="anim-stamp rounded-2xl bg-gold px-[4vmin] py-[1.4vmin] text-[3.6vmin] font-bold text-ink">
@@ -413,6 +448,22 @@ function QuestionStage({
   const attempt = phase.name === "RESULT" ? null : phase.attempt;
   const correctOption = phase.name === "RESULT" ? phase.correctOption : null;
   const excluded = phase.name === "STEAL" ? phase.excludedOption : null;
+  const readyAt = phase.name === "RESULT" ? 0 : phase.readyAt;
+  const vote = phase.name === "RESULT" ? null : phase.teamVote;
+  const prepLeft = useUntil(readyAt, now);
+  const [goFlash, setGoFlash] = useState(false);
+  const wasPrep = useRef(false);
+  useEffect(() => {
+    if (prepLeft > 0) {
+      wasPrep.current = true;
+      return;
+    }
+    if (!wasPrep.current) return;
+    wasPrep.current = false;
+    setGoFlash(true);
+    const t = setTimeout(() => setGoFlash(false), 1300);
+    return () => clearTimeout(t);
+  }, [prepLeft > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-full w-full items-center gap-[4vmin]">
@@ -450,7 +501,31 @@ function QuestionStage({
       </div>
 
       <aside className="flex w-[26vmin] shrink-0 flex-col items-center gap-[3vmin]">
-        {timer && !timer.stopped && <TimerRing timer={timer} now={now} size={Math.round(window.innerHeight * 0.2)} />}
+        {prepLeft > 0 ? (
+          <div className="flex flex-col items-center gap-[1vmin] text-center">
+            <span className="text-[3.4vmin] font-bold text-cream/80">استعدوا…</span>
+            <span key={Math.ceil(prepLeft / 1000)} className="num anim-count text-[16vmin] leading-none font-black text-goldlight">
+              {Math.ceil(prepLeft / 1000)}
+            </span>
+          </div>
+        ) : (
+          timer && !timer.stopped && <TimerRing timer={timer} now={now} size={Math.round(window.innerHeight * 0.2)} />
+        )}
+        {goFlash && (
+          <div className="anim-stamp rounded-[2vmin] bg-gold px-[2vmin] py-[1vmin] text-[4.4vmin] font-black text-ink">
+            {buzzer ? "انطلق!" : "جاوب الآن!"}
+          </div>
+        )}
+        {vote && !attempt && prepLeft <= 0 && (
+          <div className="flex flex-col items-center gap-[0.6vmin] rounded-[2vmin] bg-ink/60 px-[2vmin] py-[1.4vmin] text-center">
+            <span className="text-[2.8vmin] font-bold">
+              {vote.stuck ? "تعادل — المضيف يحسم" : vote.tie ? "تعادل! جولة حسم" : "الفريق يتشاور..."}
+            </span>
+            <span className="num text-[2.6vmin] text-cream/70">
+              صوّت {vote.voters.length} من {vote.total}
+            </span>
+          </div>
+        )}
         {phase.name === "STEAL" ? (
           <div className="anim-stamp flex flex-col items-center gap-[1vmin] text-center">
             <span className="text-[7vmin] font-black text-gold">سرقة!</span>
@@ -563,13 +638,14 @@ function Reaction({ game, phase }: { game: PublicGame; phase: Phase<"RESULT"> })
       team={team}
       points={phase.points}
       answer={phase.answer}
+      streak={good ? game.streaks[teamId] ?? 0 : 0}
     />
   );
 }
 
 // ─── Finale ─────────────────────────────────────────────────────────────────
 
-const WINNER_LINES = ["يستاهلون", "كفو والله", "خذوها بجدارة"];
+const WINNER_LINES = ["يستاهلون", "خذوها بجدارة", "كفو والله", "أبطال الخيمة", "ما خلو لكم شيء", "وش هالمستوى!"];
 
 function WinnerLine() {
   const [i, setI] = useState(0);
@@ -604,6 +680,13 @@ function Finale({ game, phase, sound }: { game: PublicGame; phase: Phase<"GAME_O
   }, [step]);
 
   const winners = phase.winners.map((id) => teamById(game.teams, id)!).filter(Boolean);
+  // the losing team gets its (gentle) moment after the winner celebration
+  const [showLosers, setShowLosers] = useState(false);
+  useEffect(() => {
+    if (step !== "reveal") return;
+    const t = setTimeout(() => setShowLosers(true), 5000);
+    return () => clearTimeout(t);
+  }, [step]);
   const tie = winners.length > 1;
   const sorted = [...game.teams].sort((a, b) => b.score - a.score);
 
@@ -635,17 +718,23 @@ function Finale({ game, phase, sound }: { game: PublicGame; phase: Phase<"GAME_O
         )}
         <WinnerLine />
       </div>
-      <div className="flex flex-wrap items-end justify-center gap-[3vmin]">
-        {winners.flatMap((w) =>
-          game.players
-            .filter((p) => p.teamId === w.id)
-            .map((p, i) => (
-              <div key={p.id} className={i % 2 ? "rx-jump" : "rx-dance"} style={{ animationDelay: `${i * 150}ms`, animationIterationCount: "infinite" }}>
-                <Character player={p} color={w.color} size={Math.round(window.innerHeight * 0.18)} />
-              </div>
-            )),
-        )}
-      </div>
+      {winners.map((w) => (
+        <WinnerCrew
+          key={w.id}
+          players={game.players.filter((p) => p.teamId === w.id)}
+          color={w.color}
+          size={Math.round(window.innerHeight * 0.17)}
+        />
+      ))}
+      {showLosers && !tie && (
+        <div className="flex flex-wrap justify-center gap-[2vmin]">
+          {game.teams
+            .filter((t) => !phase.winners.includes(t.id))
+            .map((t) => (
+              <LoserCrew key={t.id} team={t} players={game.players.filter((p) => p.teamId === t.id)} size={Math.round(window.innerHeight * 0.08)} />
+            ))}
+        </div>
+      )}
       <div className="flex gap-[3vmin]">
         {sorted.map((t, i) => (
           <div

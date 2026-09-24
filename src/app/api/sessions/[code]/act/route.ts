@@ -1,4 +1,4 @@
-import { applyHost, applyPlayer, applyTick, GameError } from "@/lib/game/engine";
+import { applyHost, applyPlayer, applyTick, GameError, needsPing } from "@/lib/game/engine";
 import type { HostAction, PlayerAction } from "@/lib/game/types";
 import { body, handle, json, view } from "@/lib/server/http";
 import { assertHost, assertPlayer, mutate } from "@/lib/server/sessions";
@@ -23,6 +23,19 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
         return applyHost(game, b.action, now());
       });
       return json(view(res.game, res.version, "host"));
+    }
+
+    if (b.role === "player" && b.action.type === "ping") {
+      // presence heartbeat: write at most every ~20s per player, without a broadcast
+      const res = await mutate(
+        code,
+        (game) => {
+          assertPlayer(game, b.playerId, b.token);
+          return needsPing(game, b.playerId, now()) ? applyPlayer(game, b.playerId, b.action, now()) : null;
+        },
+        { silent: true },
+      );
+      return json({ ok: true, version: res.version });
     }
 
     if (b.role === "player") {

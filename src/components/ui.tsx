@@ -5,7 +5,7 @@ import type { Outcome, PatternId, PublicPlayer, Team, Timer } from "@/lib/game/t
 import { useCountdown } from "@/lib/client/useGame";
 import { patternBg } from "./patterns";
 
-export const APP_VERSION = "V1.3";
+export const APP_VERSION = "V1.4";
 
 /** Official "خيمة الفنتوخ" logo (includes its own subtitle). `size` ≈ visual height / 1.4. */
 export function Logo96({ size = 64 }: { size?: number; sub?: boolean }) {
@@ -89,6 +89,8 @@ export function Character({
   size = 120,
   showName = true,
   delay = 0,
+  faceClassName = "",
+  children,
 }: {
   player: PublicPlayer;
   color: string;
@@ -96,6 +98,10 @@ export function Character({
   size?: number;
   showName?: boolean;
   delay?: number;
+  /** animation class for the face only (e.g. big-head) */
+  faceClassName?: string;
+  /** decorations positioned inside the character box (props) */
+  children?: React.ReactNode;
 }) {
   const w = size;
   const h = size * 1.5;
@@ -137,7 +143,9 @@ export function Character({
           )}
         </svg>
         <div className="absolute left-1/2 -translate-x-1/2" style={{ top: size * 0.14 }}>
-          <Avatar player={player} color={color} size={face} ring={!player.gender} />
+          <div className={faceClassName} style={{ transformOrigin: "50% 80%" }}>
+            <Avatar player={player} color={color} size={face} ring={!player.gender} />
+          </div>
         </div>
         {player.gender === "male" && (
           <svg viewBox="0 0 100 150" width={w} height={h} className="pointer-events-none absolute inset-0" aria-hidden>
@@ -145,6 +153,7 @@ export function Character({
             <ellipse cx="50" cy="21" rx="24" ry="5" fill="none" stroke="#111" strokeWidth="3.5" />
           </svg>
         )}
+        {children}
         {action === "sad" && (
           <span className="absolute -top-2 left-0 anim-pop" style={{ fontSize: size * 0.28 }}>
             💧

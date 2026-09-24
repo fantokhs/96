@@ -60,6 +60,8 @@ export interface Player {
   avatarUrl: string | null;
   teamId: string | null;
   joinedAt: number;
+  /** last heartbeat from the player's phone (presence for team voting) */
+  lastSeen?: number;
   /** private — never sent to clients */
   token: string;
 }
@@ -132,6 +134,14 @@ export type Phase =
       timer: Timer;
       buzzer: Buzzer | null;
       attempt: Attempt | null;
+      /** answers/buzzes are rejected before this time (3-2-1 prep) */
+      readyAt?: number;
+      /** team consensus votes: playerId → option (private) */
+      votes?: Record<string, number>;
+      /** tie-break round running */
+      tie?: boolean;
+      /** tie persisted after the tie-break: waiting for the host */
+      stuck?: boolean;
     }
   | {
       name: "STEAL";
@@ -143,6 +153,10 @@ export type Phase =
       timer: Timer;
       attempt: Attempt | null;
       excludedOption: number | null;
+      readyAt?: number;
+      votes?: Record<string, number>;
+      tie?: boolean;
+      stuck?: boolean;
     }
   | {
       name: "RESULT";
@@ -177,7 +191,8 @@ export interface GameEvent {
     | "gameover"
     | "pause"
     | "resume"
-    | "sfx";
+    | "sfx"
+    | "undo";
   teamId?: string | null;
   playerId?: string | null;
   points?: number;
@@ -185,7 +200,20 @@ export interface GameEvent {
   sfx?: SoundboardSfx;
 }
 
-export type SoundboardSfx = "laugh" | "whistle" | "crackers";
+export type SoundboardSfx = "laugh" | "whistle" | "crackers" | "drums" | "ooh" | "applause";
+export const SOUNDBOARD: SoundboardSfx[] = ["laugh", "whistle", "crackers", "drums", "ooh", "applause"];
+
+/** One-level undo: the parts of the game a host action can change. */
+export interface UndoSnapshot {
+  at: number;
+  teams: Team[];
+  turn: Game["turn"];
+  boards: Record<string, Card[]>;
+  usedQuestionIds: string[];
+  phase: Phase;
+  paused: boolean;
+  streaks: Record<string, number>;
+}
 
 export interface Game {
   code: string;
@@ -209,6 +237,10 @@ export interface Game {
   phase: Phase;
   paused: boolean;
   event: GameEvent;
+  /** consecutive correct answers per team */
+  streaks?: Record<string, number>;
+  /** one-level undo (private) */
+  undo?: UndoSnapshot | null;
 }
 
 // ─── Actions ────────────────────────────────────────────────────────────────
@@ -232,7 +264,11 @@ export type HostAction =
   | { type: "end_game" }
   | { type: "replay" }
   | { type: "toggle_sound" }
-  | { type: "sfx"; name: SoundboardSfx };
+  | { type: "sfx"; name: SoundboardSfx }
+  | { type: "undo" }
+  | { type: "add_time"; seconds: number }
+  | { type: "tiebreak" }
+  | { type: "team_answer"; option: number };
 
 export type PlayerAction =
   | { type: "choose_team"; teamId: string | null }
@@ -240,7 +276,8 @@ export type PlayerAction =
   | { type: "pick_card"; index: number }
   | { type: "answer"; option: number }
   | { type: "buzz" }
-  | { type: "leave" };
+  | { type: "leave" }
+  | { type: "ping" };
 
 export type SystemAction = { type: "tick" };
 
@@ -252,6 +289,15 @@ export interface PublicPlayer {
   gender: Gender;
   avatarUrl: string | null;
   teamId: string | null;
+  online: boolean;
+}
+
+/** Team voting progress — never reveals which option anyone chose. */
+export interface PublicTeamVote {
+  voters: string[];
+  total: number;
+  tie: boolean;
+  stuck: boolean;
 }
 
 export interface PublicCategory {
@@ -298,6 +344,8 @@ export type PublicPhase =
       timer: Timer;
       buzzer: Buzzer | null;
       attempt: { playerId: string; option: number; correct: boolean } | null;
+      readyAt: number;
+      teamVote: PublicTeamVote | null;
     }
   | {
       name: "STEAL";
@@ -309,6 +357,8 @@ export type PublicPhase =
       timer: Timer;
       attempt: { playerId: string; option: number; correct: boolean } | null;
       excludedOption: number | null;
+      readyAt: number;
+      teamVote: PublicTeamVote | null;
     }
   | {
       name: "RESULT";
@@ -337,6 +387,7 @@ export interface PublicGame {
   phase: PublicPhase;
   paused: boolean;
   event: GameEvent;
+  streaks: Record<string, number>;
   version: number;
   serverNow: number;
   /** how this client should listen for changes */
@@ -349,5 +400,10 @@ export interface HostView extends PublicGame {
     correctOption: number | null;
     /** remaining unused questions per category */
     remaining: Record<string, number>;
+    canUndo: boolean;
+    /** control PIN shown on the host's link card */
+    pin: string;
+    /** host-only: team vote distribution (option → votes) */
+    voteCounts: Record<number, number> | null;
   };
 }
