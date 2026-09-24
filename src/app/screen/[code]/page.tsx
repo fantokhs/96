@@ -1,6 +1,7 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
 import { confettiBurst, fireworks } from "@/components/effects";
+import { GameReaction } from "@/components/GameReaction";
 import { patternBg } from "@/components/patterns";
 import {
   Avatar,
@@ -554,49 +555,34 @@ function Reaction({ game, phase }: { game: PublicGame; phase: Phase<"RESULT"> })
   const good = phase.outcome === "correct" || phase.outcome === "steal";
   const teamId = good ? phase.teamId! : phase.activeTeamId;
   const team = teamById(game.teams, teamId)!;
-  const members = game.players.filter((p) => p.teamId === teamId).slice(0, 6);
-  const [show, setShow] = useState(true);
-  useEffect(() => {
-    if (good) confettiBurst(phase.outcome === "steal" ? 0.7 : 1);
-    const t = setTimeout(() => setShow(false), 3600);
-    return () => clearTimeout(t);
-  }, [good, phase.outcome]);
-  if (!show) return null;
-  const sadActions: CharacterAction[] = ["fall", "sad", "shake"];
-  const title =
-    phase.outcome === "correct" ? "إجابة صحيحة!" : phase.outcome === "steal" ? "سرقة ناجحة!" : phase.outcome === "wrong" ? "هاردلك!" : "تم التخطي";
   return (
-    <div className="anim-fade absolute inset-0 z-30 flex flex-col items-center justify-center gap-[3vmin] bg-ink/70 backdrop-blur-[2px]">
-      <div className="anim-stamp text-center">
-        <div className={`text-[9vmin] font-black ${good ? "text-goldlight" : "text-cream"}`}>{title}</div>
-        {good && (
-          <div className="num text-[8vmin] font-black" style={{ color: team.color }}>
-            +{phase.points}
-          </div>
-        )}
-      </div>
-      <div className="anim-rise rounded-[2vmin] bg-deep/90 px-[3vmin] py-[1.4vmin] text-center" style={{ animationDelay: "250ms" }}>
-        <span className="text-[2.6vmin] text-cream/60">الإجابة: </span>
-        <span className="text-[4vmin] font-bold text-goldlight">{phase.answer}</span>
-      </div>
-      <div className="flex items-end justify-center gap-[3vmin]">
-        {members.map((m, i) => (
-          <Character
-            key={m.id}
-            player={m}
-            color={team.color}
-            size={Math.round(window.innerHeight * 0.17)}
-            action={good ? (i % 2 ? "jump" : "dance") : phase.outcome === "skipped" ? "idle" : sadActions[i % sadActions.length]}
-            delay={i * 120}
-          />
-        ))}
-      </div>
-      <TeamBadge team={team} className="text-[3vmin]" />
-    </div>
+    <GameReaction
+      kind={phase.outcome}
+      seed={`${phase.question.id}:${phase.outcome}`}
+      players={game.players.filter((p) => p.teamId === teamId)}
+      team={team}
+      points={phase.points}
+      answer={phase.answer}
+    />
   );
 }
 
 // ─── Finale ─────────────────────────────────────────────────────────────────
+
+const WINNER_LINES = ["يستاهلون", "كفو والله", "خذوها بجدارة"];
+
+function WinnerLine() {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setI((x) => (x + 1) % WINNER_LINES.length), 2200);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div key={i} className="rx-line mt-[1vmin] text-[5vmin] font-bold text-cream/90">
+      {WINNER_LINES[i]}
+    </div>
+  );
+}
 
 function Finale({ game, phase, sound }: { game: PublicGame; phase: Phase<"GAME_OVER">; sound: boolean }) {
   const [step, setStep] = useState<"dim" | 3 | 2 | 1 | "reveal">("dim");
@@ -633,33 +619,30 @@ function Finale({ game, phase, sound }: { game: PublicGame; phase: Phase<"GAME_O
     );
   }
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-[3vmin] p-[4vmin]">
-      <Logo96 size={Math.round(window.innerHeight * 0.14)} />
-      <div className="anim-pop text-center">
+    <div className="rx-screenshake relative flex h-full w-full flex-col items-center justify-center gap-[2.5vmin] p-[4vmin]">
+      <div className="rx-glow" />
+      <Logo96 size={Math.round(window.innerHeight * 0.11)} />
+      <div className="anim-pop relative text-center">
         {tie ? (
-          <div className="text-[10vmin] font-black text-goldlight">تعادل!</div>
+          <div className="text-[12vmin] font-black text-goldlight">تعادل!</div>
         ) : (
           <>
-            <div className="text-[12vmin] leading-none font-black" style={{ color: winners[0].color }}>
+            <div className="text-[5vmin] font-bold text-goldlight">الفائز</div>
+            <div className="rx-pulse text-[15vmin] leading-tight font-black drop-shadow-[0_8px_30px_rgba(0,0,0,.5)]" style={{ color: winners[0].color }}>
               {winners[0].name}
             </div>
-            <div className="mt-[1vmin] text-[5vmin] font-bold text-goldlight">الفائز في خيمة الفنتوخ</div>
           </>
         )}
+        <WinnerLine />
       </div>
       <div className="flex flex-wrap items-end justify-center gap-[3vmin]">
         {winners.flatMap((w) =>
           game.players
             .filter((p) => p.teamId === w.id)
             .map((p, i) => (
-              <Character
-                key={p.id}
-                player={p}
-                color={w.color}
-                size={Math.round(window.innerHeight * 0.18)}
-                action={i % 2 ? "jump" : "dance"}
-                delay={i * 150}
-              />
+              <div key={p.id} className={i % 2 ? "rx-jump" : "rx-dance"} style={{ animationDelay: `${i * 150}ms`, animationIterationCount: "infinite" }}>
+                <Character player={p} color={w.color} size={Math.round(window.innerHeight * 0.18)} />
+              </div>
             )),
         )}
       </div>

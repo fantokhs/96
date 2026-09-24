@@ -31,7 +31,7 @@ export function useGameSounds(game: PublicGame | null, now: () => number, enable
     if (seq === lastSeq.current) return;
     lastSeq.current = seq;
     if (!enabled || !game.settings.soundOn) return;
-    const name = EVENT_SOUND[game.event.kind];
+    const name = game.event.kind === "sfx" ? game.event.sfx : EVENT_SOUND[game.event.kind];
     if (name) sfx?.play(name);
     if ((game.event.kind === "correct" || game.event.kind === "steal") && (game.event.points ?? 0) > 0) {
       setTimeout(() => sfx?.play("score"), 650);

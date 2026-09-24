@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import { confettiBurst } from "@/components/effects";
+import { GameReaction } from "@/components/GameReaction";
 import { patternBg } from "@/components/patterns";
 import {
   Avatar,
@@ -149,27 +150,48 @@ function JoinForm({
   removed: boolean;
   onJoined: (id: Identity, state: PublicGame) => void;
 }) {
-  const [name, setName] = useState("");
-  const [gender, setGender] = useState<Gender>(null);
-  const [teamId, setTeamId] = useState<string | null>(null);
+  // iOS Safari may reload the page after using the camera, so keep the draft.
+  const draftKey = `96:join-draft:${game.code}`;
+  const draft = useRef(
+    (() => {
+      try {
+        return JSON.parse(sessionStorage.getItem(draftKey) || "{}") as { name?: string; gender?: Gender; teamId?: string | null };
+      } catch {
+        return {};
+      }
+    })(),
+  ).current;
+  const [name, setName] = useState(draft.name ?? "");
+  const [gender, setGender] = useState<Gender>(draft.gender ?? null);
+  const [teamId, setTeamId] = useState<string | null>(draft.teamId ?? null);
   const [photo, setPhoto] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoNote, setPhotoNote] = useState("");
 
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify({ name, gender, teamId }));
+    } catch {}
+  }, [draftKey, name, gender, teamId]);
+
   const onPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.currentTarget;
     const f = input.files?.[0];
-    input.value = ""; // allow picking the same photo again
     if (!f) return;
     setPhotoBusy(true);
     setPhotoNote("");
     try {
-      setPhoto(await fileToDataUrl(f, { size: 256, square: true }));
+      // Copy the bytes right away: on iPhone a fresh camera capture is a temporary
+      // file that can become unreadable once the input is reset or re-rendered.
+      const bytes = await f.arrayBuffer();
+      const blob = new Blob([bytes], { type: f.type || "image/jpeg" });
+      setPhoto(await fileToDataUrl(blob, { size: 256, square: true }));
     } catch {
-      setPhotoNote("ما قدرنا نقرأ الصورة — جرّب صورة ثانية أو ادخل بدونها");
+      setPhotoNote("ما قدرنا نقرأ الصورة — جرّب «اختيار من الصور» أو ادخل بدونها");
     } finally {
+      input.value = ""; // allow picking again, only after we're done reading
       setPhotoBusy(false);
     }
   };
@@ -196,6 +218,9 @@ function JoinForm({
       const res = await api<Identity & { state: PublicGame }>(`/api/sessions/${game.code}/join`, {
         json: { name, gender, avatarUrl, teamId },
       });
+      try {
+        sessionStorage.removeItem(draftKey);
+      } catch {}
       onJoined({ playerId: res.playerId, token: res.token }, res.state);
     } catch (e) {
       setErr((e as Error).message);
@@ -572,29 +597,33 @@ function BuzzerView({ game, phase, me, send }: { game: PublicGame; phase: Phase<
 function ResultView({ game, phase, me }: { game: PublicGame; phase: Phase<"RESULT">; me: PublicPlayer }) {
   const scored = phase.teamId === me.teamId && phase.points > 0;
   const failed = !scored && phase.activeTeamId === me.teamId && phase.outcome !== "skipped";
+  const team = teamById(game.teams, me.teamId);
   useEffect(() => {
-    if (scored) {
-      buzz(120);
-      confettiBurst(0.5);
-    }
-  }, [scored]);
-  if (scored)
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-        <span className="anim-pop text-7xl">🎉</span>
-        <div className="num anim-stamp text-6xl font-black text-goldlight">+{phase.points}</div>
-        <div className="text-2xl font-bold">{phase.outcome === "steal" ? "سرقة ناجحة!" : "إجابة صحيحة!"}</div>
-      </div>
-    );
-  if (failed)
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-        <span className="act-shake text-7xl">😅</span>
-        <div className="text-3xl font-bold">هاردلك!</div>
-        <div className="text-cream/60">الإجابة: {phase.answer}</div>
-      </div>
-    );
-  return <Waiting emoji="✨" title={`الإجابة: ${phase.answer}`} sub="الجولة الجاية قريب" />;
+    if (scored) buzz(120);
+    else if (failed) buzz(40);
+  }, [scored, failed]);
+  return (
+    <>
+      {(scored || failed) && team && (
+        <GameReaction
+          kind={scored ? (phase.outcome === "steal" ? "steal" : "correct") : "wrong"}
+          seed={`${phase.question.id}:${phase.outcome}`}
+          players={[me]}
+          team={team}
+          points={phase.points}
+          surface="phone"
+          durationMs={2600}
+        />
+      )}
+      {scored ? (
+        <Waiting emoji="🎉" title={`+${phase.points}`} sub={`الإجابة: ${phase.answer}`} />
+      ) : failed ? (
+        <Waiting emoji="😅" title="هاردلك!" sub={`الإجابة: ${phase.answer}`} />
+      ) : (
+        <Waiting emoji="✨" title={`الإجابة: ${phase.answer}`} sub="الجولة الجاية قريب" />
+      )}
+    </>
+  );
 }
 
 function OverView({ game, phase, me }: { game: PublicGame; phase: Phase<"GAME_OVER">; me: PublicPlayer }) {

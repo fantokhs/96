@@ -534,6 +534,11 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
     case "toggle_sound":
       g.settings.soundOn = !g.settings.soundOn;
       break;
+    case "sfx":
+      // Soundboard only: emits an event for the TV, no game-state change.
+      if (!["laugh", "whistle", "crackers"].includes(action.name)) throw new GameError("مؤثر غير معروف");
+      emit(g, { kind: "sfx", sfx: action.name });
+      break;
     default:
       throw new GameError("أمر غير معروف");
   }

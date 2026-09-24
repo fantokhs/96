@@ -14,7 +14,10 @@ export type SfxName =
   | "tap"
   | "join"
   | "whoosh"
-  | "drum";
+  | "drum"
+  | "laugh"
+  | "whistle"
+  | "crackers";
 
 const MUTE_KEY = "96:muted";
 
@@ -105,6 +108,29 @@ class Sfx {
     src.start(t0);
   }
 
+  /** vibrato on top of a held note */
+  private wobble(freq: number, start: number, dur: number, depth = 12, rate = 7) {
+    const ctx = this.ctx!;
+    const t0 = ctx.currentTime + start;
+    const osc = ctx.createOscillator();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    const g = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.value = freq;
+    lfo.frequency.value = rate;
+    lfoGain.gain.value = depth;
+    lfo.connect(lfoGain).connect(osc.frequency);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.12, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g).connect(this.master!);
+    osc.start(t0);
+    lfo.start(t0);
+    osc.stop(t0 + dur + 0.05);
+    lfo.stop(t0 + dur + 0.05);
+  }
+
   private drum(start: number, gain = 0.6) {
     this.tone(140, start, 0.25, "sine", gain, 45);
     this.noise(start, 0.08, gain * 0.3, 300, 900);
@@ -132,12 +158,41 @@ class Sfx {
         this.tone(1568, 0.34, 0.4, "sine", 0.12);
         break;
       case "wrong":
-        this.tone(220, 0, 0.3, "sawtooth", 0.18, 150);
-        this.tone(160, 0.28, 0.45, "sawtooth", 0.18, 90);
+        // "wah wah wah waaah" sad trombone
+        [
+          [392, 0, 0.26],
+          [370, 0.28, 0.26],
+          [349, 0.56, 0.26],
+          [330, 0.84, 0.7],
+        ].forEach(([f, t, d]) => {
+          this.tone(f, t, d, "sawtooth", 0.14, f * 0.97);
+          this.tone(f / 2, t, d, "triangle", 0.1);
+        });
+        this.wobble(330, 0.84, 0.7);
         break;
       case "steal":
-        this.noise(0, 0.3, 0.3, 400, 4000);
-        [392, 494, 587].forEach((f, i) => this.tone(f, 0.15 + i * 0.07, 0.18, "square", 0.12));
+        this.noise(0, 0.45, 0.4, 250, 6000);
+        this.tone(200, 0, 0.35, "sawtooth", 0.12, 900);
+        [523, 659, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.3 + i * 0.06, 0.2, "square", 0.12));
+        break;
+      case "laugh":
+        // bouncy "ha-ha-ha-ha"
+        [0, 0.16, 0.32, 0.48, 0.64].forEach((t, i) => {
+          this.tone(620 - i * 40, t, 0.12, "sawtooth", 0.14, 480 - i * 40);
+          this.noise(t, 0.08, 0.08, 800, 1600);
+        });
+        break;
+      case "whistle":
+        this.tone(1900, 0, 0.25, "sine", 0.22, 2300);
+        this.tone(2300, 0.28, 0.5, "sine", 0.22, 2250);
+        this.wobble(2250, 0.28, 0.5, 60, 30);
+        break;
+      case "crackers":
+        for (let i = 0; i < 9; i++) {
+          const t = i * 0.11 + Math.random() * 0.05;
+          this.noise(t, 0.09, 0.45, 1500, 5000);
+          this.tone(90, t, 0.08, "square", 0.2, 50);
+        }
         break;
       case "score":
         this.tone(988, 0, 0.09, "square", 0.12);

@@ -4,7 +4,7 @@
  * Loads an image file, center-crops it to a square (or keeps aspect for
  * question images), downsizes and returns a JPEG data URL.
  */
-export async function fileToDataUrl(file: File, opts: { size: number; square: boolean; quality?: number }): Promise<string> {
+export async function fileToDataUrl(file: Blob, opts: { size: number; square: boolean; quality?: number }): Promise<string> {
   const src = await decode(file);
   const w = src.width;
   const h = src.height;
@@ -31,13 +31,15 @@ export async function fileToDataUrl(file: File, opts: { size: number; square: bo
 type Decoded = { image: CanvasImageSource; width: number; height: number; close: () => void };
 
 /** createImageBitmap (respects EXIF rotation from iPhone cameras), falling back to <img>. */
-async function decode(file: File): Promise<Decoded> {
+async function decode(file: Blob): Promise<Decoded> {
   if (typeof createImageBitmap === "function") {
-    try {
-      const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-      return { image: bmp, width: bmp.width, height: bmp.height, close: () => bmp.close() };
-    } catch {
-      // fall through (older Safari, unsupported format)
+    for (const opts of [{ imageOrientation: "from-image" } as ImageBitmapOptions, undefined]) {
+      try {
+        const bmp = opts ? await createImageBitmap(file, opts) : await createImageBitmap(file);
+        return { image: bmp, width: bmp.width, height: bmp.height, close: () => bmp.close() };
+      } catch {
+        // try next (older Safari rejects options / some formats)
+      }
     }
   }
   const url = URL.createObjectURL(file);

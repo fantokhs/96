@@ -176,11 +176,16 @@ export interface GameEvent {
     | "score"
     | "gameover"
     | "pause"
-    | "resume";
+    | "resume"
+    | "sfx";
   teamId?: string | null;
   playerId?: string | null;
   points?: number;
+  /** host soundboard effect (kind "sfx") */
+  sfx?: SoundboardSfx;
 }
+
+export type SoundboardSfx = "laugh" | "whistle" | "crackers";
 
 export interface Game {
   code: string;
@@ -226,7 +231,8 @@ export type HostAction =
   | { type: "adjust_score"; teamId: string; delta: number }
   | { type: "end_game" }
   | { type: "replay" }
-  | { type: "toggle_sound" };
+  | { type: "toggle_sound" }
+  | { type: "sfx"; name: SoundboardSfx };
 
 export type PlayerAction =
   | { type: "choose_team"; teamId: string | null }

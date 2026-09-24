@@ -118,7 +118,7 @@ log("card flipped, question on TV, answer only on host ✓");
 
 // 6. Host marks correct → +100
 await host.getByText("✓ إجابة صحيحة").click();
-await tv.getByText("إجابة صحيحة!").waitFor();
+await tv.getByText("+100").first().waitFor();
 await tv.waitForTimeout(900);
 await tv.screenshot({ path: `${SHOTS}/08-tv-correct.png` });
 await expectScore("الصقور", 100);
@@ -145,7 +145,7 @@ await phones[0].page.getByText("فرصة سرقة").waitFor();
 await tv.screenshot({ path: `${SHOTS}/10-tv-steal.png` });
 await phones[0].page.locator("button:has(span.rounded-full.bg-deep)", { hasText: answer2 }).click();
 try {
-  await tv.getByText("سرقة ناجحة!").waitFor({ timeout: 8000 });
+  await tv.getByText("سرقوها!").waitFor({ timeout: 8000 });
 } catch (e) {
   await tv.screenshot({ path: `${SHOTS}/fail-tv.png` });
   await phones[0].page.screenshot({ path: `${SHOTS}/fail-phone.png` });
@@ -189,7 +189,7 @@ while (guard++ < 40) {
 }
 
 // 12. Winner screen
-await tv.getByText("الفائز في خيمة الفنتوخ").waitFor({ timeout: 15000 });
+await tv.getByText("الفائز", { exact: true }).waitFor({ timeout: 15000 });
 await tv.waitForTimeout(1500);
 await tv.screenshot({ path: `${SHOTS}/11-tv-winner.png` });
 await phones[0].page.screenshot({ path: `${SHOTS}/12-phone-over.png` });

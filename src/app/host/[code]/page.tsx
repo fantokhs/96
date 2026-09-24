@@ -178,6 +178,17 @@ function HostConsole({ code, token }: { code: string; token: string }) {
 
       {p.name !== "LOBBY" && <Scores game={game} send={send} />}
 
+      {p.name !== "LOBBY" && (
+        <details className="panel px-4 py-2">
+          <summary className="cursor-pointer text-sm font-semibold text-cream/70">🎛️ مؤثرات (على التلفزيون)</summary>
+          <div className="grid grid-cols-3 gap-2 py-2">
+            <button className="btn btn-ghost px-2 py-2 text-sm" onClick={() => send({ type: "sfx", name: "laugh" })}>😂 ضحكة</button>
+            <button className="btn btn-ghost px-2 py-2 text-sm" onClick={() => send({ type: "sfx", name: "whistle" })}>📣 صفارة</button>
+            <button className="btn btn-ghost px-2 py-2 text-sm" onClick={() => send({ type: "sfx", name: "crackers" })}>🎆 طراطيع</button>
+          </div>
+        </details>
+      )}
+
       <section className="panel flex flex-col gap-4 p-4">
         {p.name === "LOBBY" && <LobbyPanel game={game} send={send} links={links} busy={busy} />}
         {p.name === "CATEGORY_VOTE" && <VotePanel game={game} phase={p} send={send} now={now} />}
