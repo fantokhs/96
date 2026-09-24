@@ -1,4 +1,5 @@
 import "server-only";
+import { GameError } from "../game/engine";
 import type { Category, Game, Question } from "../game/types";
 import { MemoryStore } from "./memory-store";
 import { SupabaseStore } from "./supabase-store";
@@ -37,8 +38,16 @@ export function supabaseConfigured() {
 
 const g = globalThis as unknown as { __store96?: Store };
 
+/** The in-memory store only works in a single process, so production requires Supabase. */
+export function memoryStoreAllowed() {
+  return process.env.NODE_ENV !== "production" || process.env.ALLOW_MEMORY_STORE === "1";
+}
+
 export function getStore(): Store {
   if (!g.__store96) {
+    if (!supabaseConfigured() && !memoryStoreAllowed()) {
+      throw new GameError("الخادم غير مربوط بقاعدة البيانات بعد (Supabase)", 503);
+    }
     g.__store96 = supabaseConfigured()
       ? new SupabaseStore(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
       : new MemoryStore();

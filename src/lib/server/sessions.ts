@@ -88,7 +88,12 @@ export async function notify(code: string, version: number) {
   try {
     await fetch(`${url}/realtime/v1/api/broadcast`, {
       method: "POST",
-      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      headers: {
+        apikey: key,
+        // New-format keys (sb_secret_…) are not JWTs and must not be sent as Bearer tokens.
+        ...(key.startsWith("sb_") ? {} : { Authorization: `Bearer ${key}` }),
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({ messages: [{ topic: `game-${code}`, event: "v", payload: { v: version } }] }),
       signal: AbortSignal.timeout(2500),
     });

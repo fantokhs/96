@@ -15,7 +15,7 @@ Version: **V1.0**
 ## Deploy (Vercel + Supabase), about 10 minutes
 
 ### 1. Supabase
-1. Create a project at [supabase.com](https://supabase.com).
+1. Create a project at [supabase.com](https://supabase.com). Choose the region **Central EU (Frankfurt)**, which is where the Vercel functions run (`vercel.json`).
 2. Open **SQL Editor**, paste all of [`supabase/setup.sql`](supabase/setup.sql), then click **Run**.
    This creates the tables, turns on row-level security and loads the 105 National Day 96 questions.
 3. Open **Project Settings → API** and copy these three values:
@@ -34,9 +34,13 @@ Version: **V1.0**
 | `SUPABASE_SERVICE_ROLE_KEY` | service_role key |
 | `ADMIN_PIN` | any PIN for `/admin/content` |
 
-3. Deploy. Then open `https://your-app.vercel.app/admin`.
+3. Deploy. Then check `https://your-app.vercel.app/api/health`: it should show `"ok":true` and `"store":"supabase"`.
+4. Open `https://your-app.vercel.app/admin`.
 
-> Without the Supabase variables the app falls back to an **in-memory store**. That is fine on one machine (`npm run dev`) but **not on Vercel**, because serverless instances don't share memory.
+Pushes to `main` deploy to production automatically. Other branches get preview URLs.
+
+> In production the app **refuses to run without Supabase** (API returns 503), because serverless instances don't share memory.
+> `NEXT_PUBLIC_*` values are baked in at build time, so if you change them, redeploy.
 
 ---
 
@@ -47,7 +51,7 @@ npm install
 npm run dev            # http://localhost:3000  (in-memory store, PIN 9696)
 ```
 
-To play on your home Wi-Fi, run `npm run build && npm start` and open `http://<your-computer-ip>:3000/admin`.
+To play on your home Wi-Fi, run `npm run build && ALLOW_MEMORY_STORE=1 npm start` and open `http://<your-computer-ip>:3000/admin`.
 Phones can then join over the LAN.
 
 Checks:
@@ -55,7 +59,7 @@ Checks:
 ```bash
 npm run typecheck
 npm run test:engine    # game-rule scenario on the pure engine
-npm run build && npm start &
+npm run build && ALLOW_MEMORY_STORE=1 ADMIN_PIN=9696 npm start &
 npm run test:e2e       # real browsers: host + TV + 4 phones, full success scenario
 ```
 
