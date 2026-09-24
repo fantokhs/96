@@ -1,0 +1,604 @@
+"use client";
+import Link from "next/link";
+import { use, useCallback, useEffect, useRef, useState } from "react";
+import { confettiBurst } from "@/components/effects";
+import { patternBg } from "@/components/patterns";
+import {
+  Avatar,
+  CardBack,
+  Character,
+  FullScreenMessage,
+  Logo96,
+  OPTION_LETTERS,
+  Spinner,
+  TeamBadge,
+  teamById,
+  UsedCard,
+} from "@/components/ui";
+import { api, local } from "@/lib/client/api";
+import { fileToDataUrl } from "@/lib/client/image";
+import { useCountdown, useGame, useTickDriver } from "@/lib/client/useGame";
+import type { Gender, PlayerAction, PublicGame, PublicPhase, PublicPlayer, Team } from "@/lib/game/types";
+
+type Phase<N extends PublicPhase["name"]> = Extract<PublicPhase, { name: N }>;
+interface Identity {
+  playerId: string;
+  token: string;
+}
+type Send = (a: PlayerAction) => Promise<boolean>;
+
+const buzz = (ms = 25) => {
+  try {
+    navigator.vibrate?.(ms);
+  } catch {}
+};
+
+export default function PlayPage({ params }: { params: Promise<{ code: string }> }) {
+  const code = use(params).code.toUpperCase();
+  const [key, setKey] = useState<string | null>(null);
+  const [me, setMe] = useState<Identity | null>(null);
+  const { game, setGame, error, online, now } = useGame(code);
+  const [toast, setToast] = useState("");
+  // Phones also nudge timed transitions (staggered) in case the host device sleeps.
+  useTickDriver(game, now, 1500);
+
+  useEffect(() => {
+    // `?slot=n` lets several test players share one browser (see /dev).
+    const slot = new URLSearchParams(window.location.search).get("slot");
+    const k = `96:player:${code}${slot ? `:${slot}` : ""}`;
+    setKey(k);
+    setMe(local.get<Identity>(k));
+  }, [code]);
+
+  const send: Send = useCallback(
+    async (action) => {
+      if (!me) return false;
+      try {
+        setGame(await api<PublicGame>(`/api/sessions/${code}/act`, { json: { role: "player", ...me, action } }));
+        return true;
+      } catch (e) {
+        setToast((e as Error).message);
+        setTimeout(() => setToast(""), 2200);
+        return false;
+      }
+    },
+    [code, me, setGame],
+  );
+
+  if (error?.status === 404) {
+    return (
+      <FullScreenMessage title="ما لقينا هذه الجلسة">
+        <p className="text-cream/60">
+          الكود <span className="num font-bold">{code}</span> غير صحيح أو انتهت الجلسة
+        </p>
+        <Link href="/" className="btn btn-gold">
+          جرّب كود ثاني
+        </Link>
+      </FullScreenMessage>
+    );
+  }
+  if (!game || key === null) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center">
+        <Spinner />
+      </main>
+    );
+  }
+
+  const player = me ? game.players.find((p) => p.id === me.playerId) : undefined;
+  if (!player) {
+    return (
+      <JoinForm
+        game={game}
+        removed={!!me}
+        onJoined={(id, state) => {
+          local.set(key, id);
+          setMe(id);
+          setGame(state);
+        }}
+      />
+    );
+  }
+
+  const team = teamById(game.teams, player.teamId);
+  return (
+    <main className="bg-majlis flex min-h-dvh flex-col" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+      <header className="flex items-center justify-between gap-3 px-4 pt-4 pb-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar player={player} color={team?.color ?? "#22A06B"} size={42} />
+          <div className="min-w-0 leading-tight">
+            <div className="truncate font-bold">{player.name}</div>
+            {team && <div className="text-sm font-semibold" style={{ color: team.color }}>{team.name}</div>}
+          </div>
+        </div>
+        {team && game.phase.name !== "LOBBY" && (
+          <div className="rounded-2xl bg-ink/50 px-3 py-1.5 text-center">
+            <div className="text-[11px] text-cream/60">نقاط فريقك</div>
+            <div className="num text-xl font-bold">{team.score}</div>
+          </div>
+        )}
+      </header>
+
+      {!online && <div className="mx-4 rounded-xl bg-danger/30 px-3 py-2 text-center text-sm">انقطع الاتصال… نحاول مجدداً</div>}
+
+      <section className="flex flex-1 flex-col px-4 pb-6">
+        {game.paused ? (
+          <Waiting emoji="⏸" title="استراحة قصيرة" sub="المضيف أوقف اللعبة مؤقتاً" />
+        ) : (
+          <Controller game={game} me={player} team={team} send={send} now={now} onLeave={() => { local.del(key); setMe(null); }} />
+        )}
+      </section>
+
+      {toast && (
+        <div className="anim-rise fixed inset-x-4 bottom-6 z-50 rounded-2xl bg-danger px-4 py-3 text-center font-semibold shadow-xl">
+          {toast}
+        </div>
+      )}
+    </main>
+  );
+}
+
+// ─── Join ───────────────────────────────────────────────────────────────────
+
+function JoinForm({
+  game,
+  removed,
+  onJoined,
+}: {
+  game: PublicGame;
+  removed: boolean;
+  onJoined: (id: Identity, state: PublicGame) => void;
+}) {
+  const [name, setName] = useState("");
+  const [gender, setGender] = useState<Gender>(null);
+  const [teamId, setTeamId] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  if (game.phase.name === "GAME_OVER") {
+    return (
+      <FullScreenMessage title="انتهت هذه اللعبة">
+        <p className="text-cream/60">اطلب من المضيف يبدأ جولة جديدة</p>
+      </FullScreenMessage>
+    );
+  }
+
+  const submit = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      let avatarUrl: string | null = null;
+      if (photo) avatarUrl = (await api<{ url: string }>("/api/media", { json: { dataUrl: photo } })).url;
+      const res = await api<Identity & { state: PublicGame }>(`/api/sessions/${game.code}/join`, {
+        json: { name, gender, avatarUrl, teamId },
+      });
+      onJoined({ playerId: res.playerId, token: res.token }, res.state);
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  const preview: PublicPlayer = { id: "me", name: name || "؟", gender, avatarUrl: photo, teamId };
+  const color = teamById(game.teams, teamId)?.color ?? "#22A06B";
+
+  return (
+    <main className="bg-majlis flex min-h-dvh flex-col items-center gap-5 px-5 py-8">
+      <Logo96 size={56} />
+      <div className="text-center">
+        <div className="text-sm text-cream/60">{game.name}</div>
+        <div className="num text-lg font-bold tracking-widest text-goldlight">{game.code}</div>
+      </div>
+      {removed && <p className="rounded-xl bg-cream/10 px-4 py-2 text-sm">خرجت من الجلسة — ادخل من جديد</p>}
+
+      <div className="relative">
+        <Character player={preview} color={color} size={110} showName={false} />
+        <button
+          className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-gold px-3 py-1 text-sm font-bold whitespace-nowrap text-ink shadow-lg"
+          onClick={() => fileRef.current?.click()}
+        >
+          📷 {photo ? "غيّر الصورة" : "أضف صورتك"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          capture="user"
+          className="hidden"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try {
+              setPhoto(await fileToDataUrl(f, { size: 256, square: true }));
+            } catch (er) {
+              setErr((er as Error).message);
+            }
+          }}
+        />
+      </div>
+
+      <div className="flex w-full max-w-sm flex-col gap-4">
+        <input
+          className="field text-center text-xl font-bold"
+          placeholder="اكتب اسمك"
+          value={name}
+          maxLength={24}
+          autoComplete="nickname"
+          onChange={(e) => setName(e.target.value)}
+        />
+
+        <div className="grid grid-cols-2 gap-2">
+          {(["male", "female"] as const).map((g) => (
+            <button
+              key={g}
+              className={`btn py-3 ${gender === g ? "btn-gold" : "btn-ghost"}`}
+              onClick={() => setGender(gender === g ? null : g)}
+            >
+              {g === "male" ? "👨 ذكر" : "👩 أنثى"}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="text-center text-sm text-cream/60">اختر فريقك</span>
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${game.teams.length + 1}, 1fr)` }}>
+            <button className={`btn px-2 py-3 text-sm ${teamId === null ? "btn-gold" : "btn-ghost"}`} onClick={() => setTeamId(null)}>
+              🎲 وزّعني
+            </button>
+            {game.teams.map((t) => (
+              <button
+                key={t.id}
+                className="btn px-2 py-3 text-sm"
+                style={{
+                  background: teamId === t.id ? t.color : `${t.color}22`,
+                  boxShadow: `inset 0 0 0 2px ${t.color}`,
+                  color: "#f6f0e1",
+                }}
+                onClick={() => setTeamId(t.id)}
+              >
+                {t.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {err && <p className="text-center text-[#ffb3b0]">{err}</p>}
+
+        <button className="btn btn-gold py-4 text-xl" disabled={busy || !name.trim()} onClick={submit}>
+          {busy ? "لحظة…" : "ادخل اللعبة"}
+        </button>
+      </div>
+    </main>
+  );
+}
+
+// ─── Controller ─────────────────────────────────────────────────────────────
+
+function Controller({
+  game,
+  me,
+  team,
+  send,
+  now,
+  onLeave,
+}: {
+  game: PublicGame;
+  me: PublicPlayer;
+  team: Team | undefined;
+  send: Send;
+  now: () => number;
+  onLeave: () => void;
+}) {
+  const p = game.phase;
+  const color = team?.color ?? "#22A06B";
+  switch (p.name) {
+    case "LOBBY":
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 text-center">
+          <div className="anim-float">
+            <Character player={me} color={color} size={130} showName={false} />
+          </div>
+          <div>
+            <div className="text-2xl font-bold">أهلاً {me.name}!</div>
+            <div className="mt-1 text-cream/60">انتظر المضيف يبدأ اللعبة</div>
+          </div>
+          <div className="flex w-full max-w-sm flex-col gap-2">
+            <span className="text-sm text-cream/60">فريقك</span>
+            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${game.teams.length}, 1fr)` }}>
+              {game.teams.map((t) => (
+                <button
+                  key={t.id}
+                  className="btn px-2 py-3"
+                  style={{ background: me.teamId === t.id ? t.color : `${t.color}22`, boxShadow: `inset 0 0 0 2px ${t.color}` }}
+                  onClick={() => me.teamId !== t.id && send({ type: "choose_team", teamId: t.id })}
+                >
+                  {t.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            className="text-sm text-cream/40 underline"
+            onClick={async () => {
+              if (confirm("تبي تطلع من اللعبة؟") && (await send({ type: "leave" }))) onLeave();
+            }}
+          >
+            خروج
+          </button>
+        </div>
+      );
+    case "CATEGORY_VOTE":
+      return me.teamId === p.teamId ? (
+        <VoteView game={game} phase={p} me={me} send={send} now={now} />
+      ) : (
+        <Waiting emoji="🗳️" title={`${teamById(game.teams, p.teamId)?.name} يختارون الفئة`} sub="انتظر دور فريقك" />
+      );
+    case "CARD_PICK":
+      return me.teamId === p.teamId ? (
+        <CardView game={game} phase={p} send={send} />
+      ) : (
+        <Waiting emoji="🃏" title={`${teamById(game.teams, p.teamId)?.name} يختارون الكرت`} sub="انتظر دور فريقك" />
+      );
+    case "QUESTION":
+      if (p.buzzer) return <BuzzerView game={game} phase={p} me={me} send={send} />;
+      return me.teamId === p.teamId ? (
+        <AnswerView game={game} phase={p} send={send} now={now} />
+      ) : (
+        <Waiting emoji="👀" title="انتظر دور فريقك" sub="ركّز… يمكن تجيكم فرصة سرقة!" />
+      );
+    case "STEAL":
+      return me.teamId === p.teamId ? (
+        <AnswerView game={game} phase={p} send={send} now={now} />
+      ) : (
+        <Waiting emoji="⚡" title={`${teamById(game.teams, p.teamId)?.name} يحاولون السرقة`} sub="انتظر دور فريقك" />
+      );
+    case "RESULT":
+      return <ResultView game={game} phase={p} me={me} />;
+    case "GAME_OVER":
+      return <OverView game={game} phase={p} me={me} />;
+  }
+}
+
+function Waiting({ emoji, title, sub }: { emoji: string; title: string; sub?: string }) {
+  return (
+    <div className="anim-fade flex flex-1 flex-col items-center justify-center gap-4 text-center">
+      <span className="anim-float text-7xl">{emoji}</span>
+      <div className="text-2xl font-bold">{title}</div>
+      {sub && <div className="text-cream/60">{sub}</div>}
+    </div>
+  );
+}
+
+function MiniTimer({ phase, now }: { phase: { timer: Phase<"QUESTION">["timer"] }; now: () => number }) {
+  const { left } = useCountdown(phase.timer, now);
+  if (phase.timer.stopped) return null;
+  return (
+    <span className={`num rounded-full px-3 py-1 text-lg font-bold ${left <= 5 ? "bg-danger" : "bg-ink/60"}`}>{left}</span>
+  );
+}
+
+function VoteView({
+  game,
+  phase,
+  me,
+  send,
+  now,
+}: {
+  game: PublicGame;
+  phase: Phase<"CATEGORY_VOTE">;
+  me: PublicPlayer;
+  send: Send;
+  now: () => number;
+}) {
+  const [mine, setMine] = useState<string | null>(null);
+  const voted = phase.voters.includes(me.id);
+  return (
+    <div className="flex flex-1 flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">صوّت للفئة</h2>
+        <MiniTimer phase={phase} now={now} />
+      </div>
+      {phase.tie && <div className="anim-stamp rounded-xl bg-gold px-3 py-2 text-center font-bold text-ink">تعادل! غيّروا صوتاً واحداً</div>}
+      <div className="grid flex-1 grid-cols-2 content-start gap-3">
+        {phase.options.map((id) => {
+          const c = game.categories.find((x) => x.id === id)!;
+          const on = voted && mine === id;
+          return (
+            <button
+              key={id}
+              className="relative flex min-h-24 flex-col items-start justify-end rounded-2xl p-3 text-right text-lg leading-tight font-bold transition active:scale-95"
+              style={{
+                backgroundColor: c.color,
+                backgroundImage: patternBg(c.pattern, "rgba(255,255,255,.18)"),
+                boxShadow: on ? "0 0 0 4px #f6f0e1" : "none",
+                opacity: voted && !on ? 0.6 : 1,
+              }}
+              onClick={async () => {
+                buzz();
+                setMine(id);
+                await send({ type: "vote_category", categoryId: id });
+              }}
+            >
+              {c.name}
+              {c.mode === "buzzer" && <span className="text-xs font-normal">⚡ أسرع إصبع</span>}
+              {on && <span className="anim-pop absolute top-2 left-2 text-xl">✓</span>}
+            </button>
+          );
+        })}
+      </div>
+      {voted && <p className="text-center text-sm text-cream/60">تم التصويت — تقدر تغيّر رأيك</p>}
+    </div>
+  );
+}
+
+function CardView({ game, phase, send }: { game: PublicGame; phase: Phase<"CARD_PICK">; send: Send }) {
+  const c = game.categories.find((x) => x.id === phase.categoryId)!;
+  const cards = game.boards[phase.categoryId] ?? [];
+  return (
+    <div className="flex flex-1 flex-col gap-4">
+      <div className="text-center">
+        <div className="text-sm text-cream/60">{c.name}</div>
+        <h2 className="text-2xl font-bold">اختر كرت!</h2>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {cards.map((card, i) => (
+          <button
+            key={i}
+            disabled={card.used}
+            className="anim-deal aspect-[5/7] transition active:scale-95 disabled:pointer-events-none"
+            style={{ animationDelay: `${i * 50}ms` }}
+            onClick={() => {
+              buzz(40);
+              void send({ type: "pick_card", index: i });
+            }}
+          >
+            {card.used ? <UsedCard outcome={card.outcome} /> : <CardBack color={c.color} pattern={c.pattern} label={<span className="num">{i + 1}</span>} />}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AnswerView({
+  game,
+  phase,
+  send,
+  now,
+}: {
+  game: PublicGame;
+  phase: Phase<"QUESTION"> | Phase<"STEAL">;
+  send: Send;
+  now: () => number;
+}) {
+  const q = phase.question;
+  const steal = phase.name === "STEAL";
+  const attempt = phase.attempt;
+  return (
+    <div className="flex flex-1 flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">{steal ? "⚡ فرصة سرقة!" : "دوركم!"}</h2>
+        <MiniTimer phase={phase} now={now} />
+      </div>
+      {q.options ? (
+        <>
+          <p className="text-cream/70">{attempt ? "تم إرسال إجابة فريقك" : "اختاروا الإجابة — أول ضغطة تُعتمد"}</p>
+          <div className={`grid flex-1 content-start gap-3 ${q.options.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+            {q.options.map((o, i) => {
+              const picked = attempt?.option === i;
+              const excluded = steal && phase.excludedOption === i;
+              return (
+                <button
+                  key={i}
+                  disabled={!!attempt || excluded}
+                  className={`flex items-center gap-3 rounded-2xl px-4 text-start text-lg font-bold transition active:scale-95 ${
+                    q.options!.length === 2 ? "min-h-40 flex-col justify-center text-3xl" : "min-h-16 py-3"
+                  } ${picked ? (attempt?.correct ? "bg-leaf" : "bg-danger") : excluded ? "bg-ink/40 line-through opacity-40" : "bg-cream/10 ring-1 ring-cream/20"}`}
+                  onClick={() => {
+                    buzz(40);
+                    void send({ type: "answer", option: i });
+                  }}
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-deep text-base">
+                    {q.type === "TRUE_FALSE" ? (i === 0 ? "✓" : "✕") : OPTION_LETTERS[i]}
+                  </span>
+                  <span>{o}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <Waiting emoji="🎤" title="جاوبوا بصوت عالي!" sub="السؤال على الشاشة — المضيف هو الحكم" />
+      )}
+    </div>
+  );
+}
+
+function BuzzerView({ game, phase, me, send }: { game: PublicGame; phase: Phase<"QUESTION">; me: PublicPlayer; send: Send }) {
+  const b = phase.buzzer!;
+  const [pressed, setPressed] = useState(false);
+  useEffect(() => setPressed(false), [b.lockedBy, b.excludedTeamIds.length]);
+  if (b.lockedBy) {
+    const winner = game.players.find((x) => x.id === b.lockedBy!.playerId);
+    return b.lockedBy.playerId === me.id ? (
+      <Waiting emoji="🎉" title="أنت الأسرع!" sub="جاوب بصوت عالي الحين" />
+    ) : (
+      <Waiting emoji="🔔" title={`سبقك ${winner?.name ?? "لاعب"}`} sub={teamById(game.teams, b.lockedBy.teamId)?.name} />
+    );
+  }
+  if (me.teamId && b.excludedTeamIds.includes(me.teamId)) {
+    return <Waiting emoji="🙈" title="فريقك خارج هذه المحاولة" sub="الفرق الثانية تحاول الحين" />;
+  }
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-6">
+      <div className="text-center text-2xl font-bold">السؤال على الشاشة!</div>
+      <button
+        disabled={pressed}
+        className="anim-pulse flex aspect-square w-[72vw] max-w-80 items-center justify-center rounded-full bg-danger text-5xl font-black shadow-[0_18px_0_#8f2a27] transition active:translate-y-3 active:shadow-[0_6px_0_#8f2a27] disabled:opacity-70"
+        onPointerDown={async () => {
+          if (pressed) return;
+          setPressed(true);
+          buzz(80);
+          if (!(await send({ type: "buzz" }))) setPressed(false);
+        }}
+      >
+        اضغط أولاً
+      </button>
+    </div>
+  );
+}
+
+function ResultView({ game, phase, me }: { game: PublicGame; phase: Phase<"RESULT">; me: PublicPlayer }) {
+  const scored = phase.teamId === me.teamId && phase.points > 0;
+  const failed = !scored && phase.activeTeamId === me.teamId && phase.outcome !== "skipped";
+  useEffect(() => {
+    if (scored) {
+      buzz(120);
+      confettiBurst(0.5);
+    }
+  }, [scored]);
+  if (scored)
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+        <span className="anim-pop text-7xl">🎉</span>
+        <div className="num anim-stamp text-6xl font-black text-goldlight">+{phase.points}</div>
+        <div className="text-2xl font-bold">{phase.outcome === "steal" ? "سرقة ناجحة!" : "إجابة صحيحة!"}</div>
+      </div>
+    );
+  if (failed)
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+        <span className="act-shake text-7xl">😅</span>
+        <div className="text-3xl font-bold">هاردلك!</div>
+        <div className="text-cream/60">الإجابة: {phase.answer}</div>
+      </div>
+    );
+  return <Waiting emoji="✨" title={`الإجابة: ${phase.answer}`} sub="الجولة الجاية قريب" />;
+}
+
+function OverView({ game, phase, me }: { game: PublicGame; phase: Phase<"GAME_OVER">; me: PublicPlayer }) {
+  const won = !!me.teamId && phase.winners.includes(me.teamId);
+  const tie = phase.winners.length > 1;
+  useEffect(() => {
+    if (won) setTimeout(() => confettiBurst(1), 4000);
+  }, [won]);
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
+      <span className="text-7xl">{won ? "🏆" : "👏"}</span>
+      <div className="text-3xl font-bold">{won ? (tie ? "تعادل! مبروك" : "فزتم! مبروك") : "حظ أوفر المرة الجاية"}</div>
+      <div className="flex flex-col gap-2">
+        {[...game.teams]
+          .sort((a, b) => b.score - a.score)
+          .map((t) => (
+            <div key={t.id} className="flex min-w-60 items-center justify-between gap-6 rounded-full px-5 py-2 text-lg font-bold" style={{ background: `${t.color}33`, boxShadow: `inset 0 0 0 2px ${t.color}` }}>
+              <span>{t.name}</span>
+              <span className="num">{t.score}</span>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
