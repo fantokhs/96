@@ -32,7 +32,7 @@ const host = await hostCtx.newPage();
 
 // 1. Host creates game (defaults: الصقور vs الذيابة, 10 questions)
 await host.goto(`${BASE}/admin`);
-await host.getByRole("button", { name: "10 أسئلة" }).click(); // V1.6 default is 15
+await host.getByRole("button", { name: "10 أسئلة" }).click(); // V1.7 default is 16
 await host.getByText("إنشاء الجلسة").click();
 await host.waitForURL(/\/control\/[A-Z0-9]{4}$/);
 const code = host.url().split("/").pop();
@@ -95,21 +95,45 @@ const expectScore = async (team, want, ms = 8000) => {
   fail(`${team}: expected ${want}, got ${got}`);
 };
 
-// 4. Start → الصقور vote
+// 4. Start → opening (host-paced) → الصقور vote
 await host.getByText("ابدأ اللعبة").click();
+await tv.getByText("الجولة الأولى").waitFor();
+await phones[0].page.getByText("جاهزين؟").waitFor();
+await tv.waitForTimeout(2800);
+await tv.screenshot({ path: `${SHOTS}/02b-tv-intro.png` });
+if ((await (await fetch(`${BASE}/api/sessions/${code}`)).json()).phase.name !== "INTRO") fail("game rushed past the opening");
+await host.getByRole("button", { name: "ابدأ الجولة" }).click();
 await phones[0].page.getByText("صوّت للفئة").waitFor();
 await phones[2].page.getByText("يختارون الفئة").waitFor();
+await tv.getByText("اختاروا الفئة").waitFor();
 await tv.screenshot({ path: `${SHOTS}/03-tv-vote.png` });
 await phones[0].page.screenshot({ path: `${SHOTS}/04-phone-vote.png` });
 for (const ph of phones.slice(0, 2)) await ph.page.getByRole("button", { name: /^من هو؟/ }).click();
+await host.getByText("اكتمل التصويت ✓").waitFor();
+await tv.getByText("اكتمل التصويت ✓").waitFor();
+if ((await (await fetch(`${BASE}/api/sessions/${code}`)).json()).phase.name !== "CATEGORY_VOTE") fail("vote jumped without the host");
+await host.getByRole("button", { name: "اعرض النتيجة" }).click();
+await tv.getByText("تم اختيار").waitFor();
 await tv.getByText("اختاروا الكرت").waitFor();
-log("vote → winning category ✓");
+log("opening waits for «ابدأ الجولة»; full vote waits for «اعرض النتيجة» → «تم اختيار» 3-2-1 ✓");
 await tv.waitForTimeout(700);
 await tv.screenshot({ path: `${SHOTS}/05-tv-cards.png` });
 
 // 5. Team picks card 4 → flip → question + timer; host sees answer
 await phones[1].page.getByRole("button", { name: "4", exact: true }).click();
 await host.getByText("الإجابة (لك فقط)").waitFor();
+// question prep: the answer clock waits for the presenter
+await tv.getByText("بانتظار المقدم").waitFor();
+await phones[0].page.getByText("انتظر المقدم").waitFor();
+const held = (await (await fetch(`${BASE}/api/sessions/${code}`)).json()).phase;
+if (!held.hold || held.timer.endsAt !== null) fail("answer timer started before «ابدأ الوقت»");
+await tv.waitForTimeout(900);
+await tv.screenshot({ path: `${SHOTS}/05b-tv-question-hold.png` });
+await phones[0].page.screenshot({ path: `${SHOTS}/05c-phone-hold.png` });
+await host.getByRole("button", { name: "ابدأ الوقت ⏱" }).click();
+const running = (await (await fetch(`${BASE}/api/sessions/${code}`)).json()).phase;
+if (running.hold || running.timer.endsAt === null) fail("ابدأ الوقت did not start the timer");
+log("question prep: «انتظر المقدم» on phones, timer idle until «ابدأ الوقت» ✓");
 const answer1 = await host.locator(".text-goldlight").filter({ hasText: /.+/ }).last().textContent();
 await tv.waitForTimeout(1200);
 if (await tv.getByText(answer1, { exact: true }).count()) fail("answer leaked on TV");
@@ -125,11 +149,16 @@ await tv.screenshot({ path: `${SHOTS}/08-tv-correct.png` });
 await expectScore("الصقور", 100);
 log("الصقور +100 ✓");
 
-// 7. Auto-advance → الذيابة. They vote سعودي وبس (all multiple-choice), pick a card, answer wrong
+// 7. Host advances («التالي») → الذيابة. They vote سعودي وبس (all multiple-choice), pick a card, answer wrong
+await host.getByRole("button", { name: "التالي ←" }).click();
 await phones[2].page.getByText("صوّت للفئة").waitFor({ timeout: 15000 });
 for (const ph of phones.slice(2)) await ph.page.getByRole("button", { name: /^سعودي وبس/ }).click();
+await host.getByRole("button", { name: "اعرض النتيجة" }).click();
 await phones[2].page.getByRole("button", { name: "1", exact: true }).click();
 await host.getByText("الإجابة (لك فقط)").waitFor();
+// taps before «ابدأ الوقت» are impossible: the phone shows the question with disabled options
+await phones[2].page.getByText("انتظر المقدم").waitFor();
+await host.getByRole("button", { name: "ابدأ الوقت ⏱" }).click();
 const answer2 = (await host.locator(".rounded-2xl.border-2 .text-goldlight").textContent()).trim();
 await phones[2].page.locator("button:has(span.rounded-full.bg-deep)").first().waitFor();
 const options = await phones[2].page.locator("button:has(span.rounded-full.bg-deep)").allTextContents();
@@ -182,10 +211,17 @@ let guard = 0;
 while (guard++ < 40) {
   const label = await host.locator("header .text-sm").first().textContent();
   if (label.includes("انتهت اللعبة")) break;
-  if (await host.getByText("اختيار الفئة يدوياً").isVisible().catch(() => false)) {
-    await host.locator("section.panel button.rounded-xl").first().click();
-  } else if (await host.getByText("أو اختر عنهم").isVisible().catch(() => false)) {
-    await host.locator("section.panel button.aspect-\\[5\\/6\\]:not([disabled])").first().click();
+  const btn = async (name) => host.getByRole("button", { name, exact: true }).isVisible().catch(() => false);
+  if (await btn("اعتماد التصويت الآن")) {
+    await host.getByRole("button", { name: "اعتماد التصويت الآن" }).click();
+  } else if (await btn("اعرض النتيجة")) {
+    await host.getByRole("button", { name: "اعرض النتيجة" }).click();
+  } else if (await btn("اعرض السؤال")) {
+    await host.getByRole("button", { name: "اعرض السؤال" }).click();
+  } else if (await btn("ابدأ الوقت ⏱")) {
+    await host.getByRole("button", { name: "ابدأ الوقت ⏱" }).click();
+  } else if (await btn("ابدأ التحدي ⚡")) {
+    await host.getByRole("button", { name: "ابدأ التحدي ⚡" }).click();
   } else if (await host.getByText("✓ إجابة صحيحة").isVisible().catch(() => false)) {
     // alternate: الذيابة get their points too
     await host.getByText("✓ إجابة صحيحة").click();

@@ -16,6 +16,16 @@ const EVENT_SOUND: Partial<Record<PublicGame["event"]["kind"], SfxName>> = {
   buzz: "buzz",
   skip: "whoosh",
   score: "score",
+  intro: "drums",
+  go: "whistle",
+  voted: "tap",
+};
+
+/** V1.7: one follow-up per reaction, timed to its stages (never two at once). */
+const FOLLOW_UP: Partial<Record<PublicGame["event"]["kind"], [SfxName, number]>> = {
+  correct: ["applause", 2800],
+  wrong: ["laugh", 2700],
+  steal: ["whoosh", 1500],
 };
 
 /** Plays a sound for each new game event plus the last-5-seconds countdown. */
@@ -35,6 +45,14 @@ export function useGameSounds(game: PublicGame | null, now: () => number, enable
     if (name) sfx?.play(name);
     if ((game.event.kind === "correct" || game.event.kind === "steal") && (game.event.points ?? 0) > 0) {
       setTimeout(() => sfx?.play("score"), 650);
+    }
+    const follow = FOLLOW_UP[game.event.kind];
+    // only when the event really ended the question (a wrong vote during the question isn't a reaction)
+    if (follow && game.phase.name === "RESULT") {
+      const at = game.event.seq;
+      setTimeout(() => {
+        if (lastSeq.current === at) sfx?.play(follow[0]);
+      }, follow[1]);
     }
   }, [game, enabled]);
 

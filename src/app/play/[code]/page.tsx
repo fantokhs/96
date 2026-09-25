@@ -427,6 +427,19 @@ function Controller({
           </button>
         </div>
       );
+    case "INTRO":
+      return (
+        <div className="anim-fade flex flex-1 flex-col items-center justify-center gap-5 text-center">
+          <div className="anim-float">
+            <Character player={me} color={color} size={120} showName={false} />
+          </div>
+          <div className="text-3xl font-black">جاهزين؟</div>
+          <div className="text-cream/70">
+            أنت مع <b style={{ color }}>{team?.name}</b>
+          </div>
+          <div className="wait-breathe wait-dots text-cream/60">المقدم يبدأ الجولة</div>
+        </div>
+      );
     case "CATEGORY_VOTE":
       return me.teamId === p.teamId ? (
         <VoteView game={game} phase={p} me={me} send={send} now={now} />
@@ -435,7 +448,7 @@ function Controller({
       );
     case "CARD_PICK":
       return me.teamId === p.teamId ? (
-        <CardView key={`${p.categoryId}-${game.turn.questionsPlayed}`} game={game} phase={p} send={send} />
+        <CardView key={`${p.categoryId}-${game.turn.questionsPlayed}`} game={game} phase={p} send={send} now={now} />
       ) : (
         <Waiting emoji="🃏" title={`${teamById(game.teams, p.teamId)?.name} يختارون الكرت`} sub="انتظر دور فريقك" />
       );
@@ -526,7 +539,13 @@ function VoteView({
           );
         })}
       </div>
-      {voted && <p className="text-center text-sm text-cream/60">تم التصويت — تقدر تغيّر رأيك</p>}
+      {phase.complete ? (
+        <p className="wait-breathe text-center font-bold text-cream/80">
+          اكتمل التصويت ✓ <span className="wait-dots font-normal text-cream/60">بانتظار المقدم</span>
+        </p>
+      ) : (
+        voted && <p className="text-center text-sm text-cream/60">تم التصويت — تقدر تغيّر رأيك</p>
+      )}
     </div>
   );
 }
@@ -564,16 +583,31 @@ function useFreshTap(active: boolean) {
   };
 }
 
-function CardView({ game, phase, send }: { game: PublicGame; phase: Phase<"CARD_PICK">; send: Send }) {
+function CardView({ game, phase, send, now }: { game: PublicGame; phase: Phase<"CARD_PICK">; send: Send; now: () => number }) {
   const c = game.categories.find((x) => x.id === phase.categoryId)!;
   const cards = game.boards[phase.categoryId] ?? [];
-  // brief lock so the category-vote tap can't pick a card
-  const [armed, setArmed] = useState(false);
+  // «تم اختيار» 3-2-1 (server readyAt) so the category-vote tap can't pick a card
+  const reveal = useUntil(phase.readyAt, now);
+  const [minDelay, setMinDelay] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setArmed(true), 700);
+    const t = setTimeout(() => setMinDelay(true), 700);
     return () => clearTimeout(t);
   }, []);
+  const armed = minDelay && reveal <= 0;
   const tap = useFreshTap(armed);
+  if (reveal > 0) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center select-none" style={{ pointerEvents: "none" }}>
+        <div className="text-lg text-cream/70">تم اختيار</div>
+        <div className="anim-stamp rounded-2xl px-6 py-3 text-3xl font-black" style={{ backgroundColor: c.color }}>
+          {c.name}
+        </div>
+        <span key={Math.ceil(reveal / 1000)} className="num anim-count text-[7rem] leading-none font-black text-goldlight">
+          {Math.ceil(reveal / 1000)}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="text-center">
@@ -620,8 +654,9 @@ function AnswerView({
   const steal = phase.name === "STEAL";
   const attempt = phase.attempt;
   const vote = phase.teamVote;
+  const hold = phase.name === "QUESTION" && phase.hold;
   const left = useUntil(phase.readyAt, now);
-  const ready = left <= 0;
+  const ready = left <= 0 && !hold;
   const [goFlash, setGoFlash] = useState(false);
   const [mine, setMine] = useState<number | null>(null);
   const sentRef = useRef<number | null>(null);
@@ -640,7 +675,15 @@ function AnswerView({
   }, [ready, phase.readyAt]);
   useEffect(() => () => void (pending.current && clearTimeout(pending.current)), []);
 
+  if (hold) return <HoldView game={game} q={q} me={me} />;
   if (!ready) {
+    if (!steal) {
+      return (
+        <div className="flex flex-1 items-center justify-center select-none" style={{ pointerEvents: "none" }}>
+          <div className="anim-stamp rounded-3xl bg-gold px-8 py-6 text-center text-5xl font-black text-ink">جاوب الآن!</div>
+        </div>
+      );
+    }
     return (
       <Prep
         left={left}
@@ -741,6 +784,37 @@ function AnswerView({
   );
 }
 
+/** V1.7: the question is on screen, the presenter hasn't started the time yet. */
+function HoldView({ game, q, me }: { game: PublicGame; q: Phase<"QUESTION">["question"]; me: PublicPlayer }) {
+  const team = teamById(game.teams, me.teamId);
+  return (
+    <div className="flex flex-1 flex-col gap-4 select-none">
+      <div className="text-center text-lg font-bold" style={{ color: team?.color }}>
+        دوركم يا {team?.name}!
+      </div>
+      <p className="rounded-2xl bg-cream/8 p-4 text-center text-xl leading-snug font-bold">{q.question}</p>
+      {q.options && (
+        <div className={`grid gap-2 opacity-45 ${q.options.length === 2 ? "grid-cols-2" : "grid-cols-1"}`} aria-disabled>
+          {q.options.map((o, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-2xl bg-cream/10 px-4 py-3 text-lg font-bold">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-deep text-base text-cream">
+                {q.type === "TRUE_FALSE" ? (i === 0 ? "✓" : "✕") : OPTION_LETTERS[i]}
+              </span>
+              {o}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="wait-breathe mt-auto rounded-2xl bg-ink/60 px-4 py-4 text-center text-xl font-bold">
+        <span className="wait-dots">انتظر المقدم</span>
+        <div className="mt-1 text-sm font-normal text-cream/60">
+          {q.options ? "تناقشوا الحين — الأزرار تشتغل لما يبدأ الوقت" : "تناقشوا الحين — تجاوبون بصوت عالي لما يبدأ الوقت"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BuzzerView({
   game,
   phase,
@@ -768,6 +842,15 @@ function BuzzerView({
   }
   if (me.teamId && b.excludedTeamIds.includes(me.teamId)) {
     return <Waiting emoji="🙈" title="فريقك خارج هذه المحاولة" sub="الفرق الثانية تحاول الحين" />;
+  }
+  if (phase.hold) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center select-none">
+        <div className="text-lg text-cream/70">⚡ أسرع إصبع</div>
+        <div className="wait-breathe text-5xl font-black text-goldlight">استعدوا</div>
+        <div className="wait-dots text-cream/60">انتظر المقدم</div>
+      </div>
+    );
   }
   if (left > 0) return <Prep left={left} title="⚡ أسرع إصبع" sub="السؤال على الشاشة" go="انطلق!" />;
   return (
@@ -807,7 +890,6 @@ function ResultView({ game, phase, me }: { game: PublicGame; phase: Phase<"RESUL
           team={team}
           points={phase.points}
           surface="phone"
-          durationMs={2600}
         />
       )}
       {scored ? (
@@ -815,7 +897,7 @@ function ResultView({ game, phase, me }: { game: PublicGame; phase: Phase<"RESUL
       ) : failed ? (
         <Waiting emoji="😅" title="هاردلك!" sub={`الإجابة: ${phase.answer}`} />
       ) : (
-        <Waiting emoji="✨" title={`الإجابة: ${phase.answer}`} sub="الجولة الجاية قريب" />
+        <Waiting emoji="✨" title={`الإجابة: ${phase.answer}`} sub="بانتظار المقدم…" />
       )}
     </>
   );

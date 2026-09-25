@@ -1,4 +1,4 @@
-import { createGame, DEFAULT_TEAM_COLORS, GameError } from "@/lib/game/engine";
+import { createGame, DEFAULT_TEAM_COLORS, GameError, normalizeLength } from "@/lib/game/engine";
 import { cleanupDrafts } from "@/lib/server/drafts";
 import type { Settings } from "@/lib/game/types";
 import { body, handle, json } from "@/lib/server/http";
@@ -42,7 +42,7 @@ export async function POST(req: Request) {
 
     const s = b.settings ?? {};
     const settings: Partial<Settings> = {
-      totalQuestions: int(s.totalQuestions, 1, 200, 15),
+      totalQuestions: normalizeLength(int(s.totalQuestions, 1, 200, 16)),
       targetScore: null,
       voteEvery: 1,
       questionSeconds: int(s.questionSeconds, 5, 120, 20)!,

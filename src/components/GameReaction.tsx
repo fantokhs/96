@@ -1,6 +1,7 @@
 "use client";
 // Reaction overlay derived from the RESULT phase. Purely client-side: nothing is stored;
 // it unmounts as soon as the phase moves on (host pressing "next" cancels it instantly).
+// V1.7: three stages — impact (score flash) → main character animation → ~1.5s photo freeze.
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { PublicPlayer, Team } from "@/lib/game/types";
 import { confettiBurst } from "./effects";
@@ -72,7 +73,13 @@ type Scene =
   | "coins"
   | "magic"
   | "vault"
-  | "pointsFly";
+  | "pointsFly"
+  | "moneyThrow"
+  | "selfie"
+  | "bonk"
+  | "hook"
+  | "noticed"
+  | "flag";
 interface Variant {
   id: string;
   anim: string;
@@ -107,6 +114,15 @@ const CORRECT: Variant[] = [
   { id: "slowmo", anim: "rx-slowmo", scene: "darken", lines: ["يا سلام!", "ما شاء الله!"] },
   { id: "superhero", anim: "rx-landing", props: [{ e: "💥", at: "feet", cls: "rxp-dust", delay: 450 }], lines: ["وحش!", "يا قوي!"] },
   { id: "spotlightFreeze", anim: "rx-pose", scene: "spotlight", props: [{ e: "✨", at: "around", cls: "rxp-pop", delay: 300 }] },
+  // V1.7
+  { id: "flex", anim: "rx-hype", props: [{ e: "💪", at: "hand", cls: "rxp-pop", delay: 200, scale: 1.2 }], lines: ["عضلات المخ!", "يا قوي!"] },
+  { id: "moneyThrow", anim: "rx-bob", scene: "moneyThrow", props: [{ e: "💸", at: "hand", cls: "rxp-bounce" }], lines: ["فلوس على الكل!", "كفو!"] },
+  { id: "bow", anim: "rx-bow", props: [{ e: "🎩", at: "head", cls: "rxp-drop" }], lines: ["شكراً شكراً", "يا سلام!"] },
+  { id: "selfie", anim: "rx-pose", scene: "selfie", props: [{ e: "🤳", at: "hand", cls: "rxp-pop", delay: 250, scale: 1.2 }], lines: ["سيلفي الفوز!", "صوّروني!"] },
+  { id: "pointAt", anim: "rx-cool", props: [{ e: "👉", at: "hand", cls: "rxp-point", scale: 1.1 }], lines: ["هذا فريقنا!", "شفتوا؟"] },
+  { id: "swagger", anim: "rx-swagger", props: [{ e: "🕶️", at: "face", cls: "rxp-drop", delay: 900 }], lines: ["ولا كأن شي صار", "سهلة!"] },
+  { id: "flag", anim: "rx-bob", scene: "flag", props: [{ e: "🇸🇦", at: "hand", cls: "rxp-wave", scale: 1.3 }], lines: ["عزنا بطبعنا!", "كفو يا عيال!"] },
+  { id: "camelRide", anim: "rx-ride", props: [{ e: "🐪", at: "feet", cls: "", scale: 1.8 }], lines: ["داخلين بالفزعة!", "وحش!"] },
 ];
 
 const WRONG: Variant[] = [
@@ -125,6 +141,16 @@ const WRONG: Variant[] = [
   { id: "rain", anim: "rx-sad", props: [{ e: "🌧️", at: "above", cls: "rxp-float" }, { node: "drops", at: "above" }], lines: ["الله يعوض", "المرة الجاية"] },
   { id: "sandal", anim: "rx-duck", scene: "sandal", lines: ["يا ساتر!", "ركز شوي"] },
   { id: "slideoff", anim: "rx-slideoff", lines: ["مو اليوم", "المرة الجاية"] },
+  // V1.7
+  { id: "cry", anim: "rx-sad", props: [{ e: "😭", at: "face", cls: "rxp-pop", delay: 250, scale: 1.2 }, { node: "drops", at: "above" }], lines: ["لا تبكي!", "الله يعوض"] },
+  { id: "walkaway", anim: "rx-walkaway", lines: ["خلاص… أنا طالع", "مو اليوم"] },
+  { id: "collapse", anim: "rx-collapse", props: [{ e: "💀", at: "above", cls: "rxp-pop", delay: 900 }], lines: ["مات من القهر", "يا ساتر!"] },
+  { id: "hide", anim: "rx-hide", props: [{ e: "🙈", at: "face", cls: "rxp-pop", delay: 300, scale: 1.3 }], lines: ["لا تشوفوني", "فشلة!"] },
+  { id: "shocked", anim: "rx-shake", face: "rx-bighead", props: [{ e: "😱", at: "above", cls: "rxp-pop", delay: 150 }], lines: ["مستحيل!", "وش صار؟"] },
+  { id: "bonk", anim: "rx-bonked", scene: "bonk", props: [{ e: "💫", at: "around", cls: "rxp-orbit", delay: 700 }], lines: ["ركز شوي!", "صحصح!"] },
+  { id: "dragged", anim: "rx-dragged", scene: "hook", lines: ["برا برا!", "مع السلامة"] },
+  { id: "sitSad", anim: "rx-sitdown", props: [{ e: "😔", at: "above", cls: "rxp-pop", delay: 600 }], lines: ["المرة الجاية", "الله يعوض"] },
+  { id: "disbelief", anim: "rx-stare", face: "rx-bighead", props: [{ e: "😐", at: "above", cls: "rxp-pop", delay: 700 }], lines: ["جد؟", "…"] },
 ];
 
 const STEAL: Variant[] = [
@@ -136,6 +162,10 @@ const STEAL: Variant[] = [
   { id: "magician", anim: "rx-pose", props: [{ e: "🎩", at: "head", cls: "rxp-drop" }], scene: "magic" },
   { id: "tiptoe", anim: "rx-tiptoe", props: [{ e: "💰", at: "hand", cls: "rxp-bounce" }], lines: ["سرقوها!", "ما قصرتوا"] },
   { id: "vault", anim: "rx-grab", scene: "vault", props: [{ e: "💰", at: "hand", cls: "rxp-pop", delay: 1100 }] },
+  // V1.7
+  { id: "trophy", anim: "rx-run", props: [{ e: "🏆", at: "hand", cls: "rxp-bounce", scale: 1.2 }], lines: ["الكأس لنا!", "خذوها!"] },
+  { id: "chased", anim: "rx-run", scene: "noticed", props: [{ e: "💰", at: "hand", cls: "rxp-bounce" }], lines: ["لحقوه!", "راحت منكم!"] },
+  { id: "sneak", anim: "rx-tiptoe", scene: "noticed", props: [{ node: "mask", at: "face" }, { e: "🪙", at: "hand", cls: "rxp-bounce" }], lines: ["انتبهوا متأخر!", "سرقة نظيفة"] },
 ];
 
 const GROUPS: Record<Exclude<ReactionKind, "skipped">, Variant[]> = { correct: CORRECT, wrong: WRONG, steal: STEAL };
@@ -282,7 +312,43 @@ function SceneLayer({ scene, points, color }: { scene: Scene; points: number; co
           +{points}
         </span>
       );
+    case "moneyThrow":
+      return (
+        <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden">
+          {Array.from({ length: 16 }, (_, i) => (
+            <span key={i} className="rxs-rain" style={{ left: `${(i * 61) % 96}%`, animationDelay: `${(i * 157) % 1600}ms`, fontSize: "5vmin" }}>
+              💵
+            </span>
+          ))}
+        </div>
+      );
+    case "selfie":
+      return <div className="rxs-selfie" />;
+    case "bonk":
+      return <span className="rxs-bonk">🔨</span>;
+    case "hook":
+      return <span className="rxs-hook">🪝</span>;
+    case "noticed":
+      return <span className="rxs-noticed">😠❗</span>;
+    case "flag":
+      return (
+        <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden">
+          {Array.from({ length: 8 }, (_, i) => (
+            <span key={i} className="rxs-rain" style={{ left: `${(i * 97) % 94}%`, animationDelay: `${(i * 211) % 1500}ms`, fontSize: "4.5vmin" }}>
+              🇸🇦
+            </span>
+          ))}
+        </div>
+      );
   }
+}
+
+/** Stage timings (ms): impact flash → main animation → photo freeze → overlay fades (result card stays). */
+export function reactionTiming(kind: ReactionKind, surface: "tv" | "phone") {
+  if (kind === "skipped") return { impact: 0, main: 1600, total: 1600 };
+  const main = kind === "steal" ? 3300 : 2800;
+  const total = kind === "steal" ? 5000 : kind === "wrong" ? 4300 : 4500;
+  return surface === "tv" ? { impact: 700, main, total } : { impact: 500, main: main - 300, total: total - 500 };
 }
 
 export function GameReaction({
@@ -323,11 +389,17 @@ export function GameReaction({
     const lines = variant?.lines ?? (kind === "correct" ? CORRECT_LINES : kind === "wrong" ? WRONG_LINES : STEAL_LINES);
     return pickLine(kind, lines);
   }, [kind, variant, about]);
-  const total = durationMs ?? (kind === "steal" ? 3600 : 2800);
+  const timing = reactionTiming(kind, surface);
+  const total = durationMs ?? timing.total;
   const [show, setShow] = useState(true);
+  const [stage, setStage] = useState<"impact" | "main" | "freeze">(timing.impact > 0 ? "impact" : "main");
 
   useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = [setTimeout(() => setShow(false), total)];
+    const timers: ReturnType<typeof setTimeout>[] = [
+      setTimeout(() => setShow(false), total),
+      setTimeout(() => setStage("main"), timing.impact),
+      setTimeout(() => setStage("freeze"), Math.min(timing.main, total - 400)),
+    ];
     const strength = surface === "phone" ? 0.5 : 1;
     if (kind === "correct") {
       confettiBurst(strength);
@@ -338,7 +410,7 @@ export function GameReaction({
       timers.push(setTimeout(() => confettiBurst(strength), 1300));
     }
     return () => timers.forEach(clearTimeout);
-  }, [kind, variant, surface, total]);
+  }, [kind, variant, surface, total, timing.impact, timing.main]);
 
   if (!show) return null;
   const tv = surface === "tv";
@@ -347,8 +419,25 @@ export function GameReaction({
   const size = tv ? Math.round(window.innerHeight * (shown.length > 3 ? 0.17 : 0.22)) : 150;
   const streakLine = kind !== "wrong" && kind !== "skipped" ? (streak >= 5 ? "ما يوقفون! 🔥🔥" : streak === 3 ? "مولعين! 🔥" : null) : null;
 
+  // Stage 1: score impact — a flash and one big stamp, nothing else yet
+  if (stage === "impact") {
+    return (
+      <div data-reaction="impact" className={`${tv ? "absolute" : "fixed"} inset-0 z-40 flex items-center justify-center overflow-hidden bg-ink/70`}>
+        <div className={`rx-impact ${good ? "rx-impact-good" : "rx-impact-bad"}`} />
+        <div
+          className="anim-stamp relative z-[2] num font-black leading-none"
+          style={{ color: good ? team.color : "#ff6b66", fontSize: tv ? "22vmin" : 96, textShadow: "0 10px 40px rgba(0,0,0,.5)" }}
+        >
+          {good && points > 0 ? `+${points}` : kind === "steal" ? "⚡" : "✕"}
+        </div>
+      </div>
+    );
+  }
+  const frozen = stage === "freeze";
+
   return (
     <div
+      data-reaction={stage}
       className={`anim-fade ${tv ? "absolute" : "fixed"} inset-0 z-40 flex flex-col items-center justify-center overflow-hidden bg-ink/75 backdrop-blur-[2px] ${
         kind === "steal" ? "rx-screenshake" : ""
       }`}
@@ -375,8 +464,9 @@ export function GameReaction({
         )}
       </div>
 
+      {frozen && <div className="rx-camera-flash" />}
       {variant && shown.length > 0 && (
-        <div className="relative z-[2] flex items-end justify-center" style={{ gap: tv ? "4vmin" : 12 }}>
+        <div className={`relative z-[2] flex items-end justify-center ${frozen ? "rx-freeze-frame" : ""}`} style={{ gap: tv ? "4vmin" : 12 }}>
           {shown.map((p, i) => (
             <div key={p.id} className={variant.anim} style={{ animationDelay: `${i * 110}ms` }}>
               <Character player={p} color={team.color} size={size} faceClassName={variant.face}>

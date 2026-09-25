@@ -127,10 +127,13 @@ for (const [name, team] of [["عزيز", "الصقور"], ["سارة", "الصق
   phones.push(page);
 }
 await laptop.getByRole("button", { name: "ابدأ اللعبة" }).click();
+await laptop.getByRole("button", { name: "ابدأ الجولة" }).click();
 for (const ph of phones.slice(0, 2)) await ph.getByRole("button", { name: /^وش تعرف عنه/ }).click();
+await laptop.getByRole("button", { name: "اعرض النتيجة" }).click();
 await phones[0].getByText("اختر كرت").waitFor();
 await phones[0].getByRole("button", { name: "1", exact: true }).click();
 await laptop.getByText("الإجابة (لك فقط)").waitFor();
+await laptop.getByRole("button", { name: "ابدأ الوقت ⏱" }).click();
 const st = await (await fetch(`${BASE}/api/sessions/${code}`)).json();
 const q = st.phase.question;
 if (!q.about) fail("expected a personal question");
@@ -162,9 +165,11 @@ await laptop.getByText("التالي ←").click();
 // الذيابة (1 player): wrong → steal by الصقور
 await phones[2].getByText("صوّت للفئة").waitFor({ timeout: 15000 });
 await phones[2].getByRole("button", { name: /^وش تعرف عنه/ }).click();
+await laptop.getByRole("button", { name: "اعرض النتيجة" }).click();
 await phones[2].getByText("اختر كرت").waitFor();
 await phones[2].getByRole("button", { name: "2", exact: true }).click();
 await laptop.getByText("الإجابة (لك فقط)").waitFor();
+await laptop.getByRole("button", { name: "ابدأ الوقت ⏱" }).click();
 const q2 = (await (await fetch(`${BASE}/api/sessions/${code}`)).json()).phase.question;
 const a2 = (await laptop.locator(".rounded-2xl.border-2 .text-goldlight").textContent()).trim();
 if (q2.options) {

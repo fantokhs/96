@@ -5,9 +5,10 @@ import { PALETTE, PATTERN_IDS, patternBg } from "@/components/patterns";
 import { APP_VERSION, Logo96, Spinner } from "@/components/ui";
 import { api, local } from "@/lib/client/api";
 import { fileToDataUrl } from "@/lib/client/image";
-import { QUESTION_TYPES, type Category, type Question, type QuestionType } from "@/lib/game/types";
+import { DIFFICULTIES, QUESTION_TYPES, type Category, type Difficulty, type Question, type QuestionType } from "@/lib/game/types";
 
 const PIN_KEY = "96:admin-pin";
+const DIFF_ON: Record<Difficulty, string> = { easy: "bg-leaf/60 text-white", medium: "bg-gold/70 text-ink", hard: "bg-danger/70 text-white" };
 
 export default function ContentManager() {
   const [pin, setPin] = useState<string | null>(null);
@@ -17,6 +18,7 @@ export default function ContentManager() {
   const [catId, setCatId] = useState<string | null>(null);
   const [editingCat, setEditingCat] = useState<Partial<Category> | null>(null);
   const [editingQ, setEditingQ] = useState<Partial<Question> | null>(null);
+  const [diff, setDiff] = useState<"all" | Difficulty>("all");
 
   const load = useCallback(async (p: string) => {
     try {
@@ -60,7 +62,8 @@ export default function ContentManager() {
     await load(pin!);
   };
 
-  const questions = useMemo(() => data?.questions.filter((q) => q.categoryId === catId) ?? [], [data, catId]);
+  const inCat = useMemo(() => data?.questions.filter((q) => q.categoryId === catId) ?? [], [data, catId]);
+  const questions = useMemo(() => inCat.filter((q) => diff === "all" || (q.difficulty ?? "medium") === diff), [inCat, diff]);
   const cat = data?.categories.find((c) => c.id === catId);
 
   if (pin === null && !err) return <main className="flex min-h-dvh items-center justify-center"><Spinner /></main>;
@@ -137,11 +140,26 @@ export default function ContentManager() {
                 <button className="btn btn-ghost px-3 py-2 text-sm" onClick={() => setEditingCat(cat)}>تعديل الفئة</button>
                 <button
                   className="btn btn-gold px-3 py-2 text-sm"
-                  onClick={() => setEditingQ({ categoryId: cat.id, themeId: cat.themeId, type: "TEXT", points: 100, active: true, options: ["", "", "", ""], correctOption: 0 })}
+                  onClick={() => setEditingQ({ categoryId: cat.id, themeId: cat.themeId, type: "TEXT", points: 100, active: true, options: ["", "", "", ""], correctOption: 0, difficulty: "medium" })}
                 >
                   + سؤال
                 </button>
               </div>
+            </div>
+          )}
+          {cat && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-cream/60">الصعوبة:</span>
+              {(["all", ...DIFFICULTIES.map((d) => d.id)] as ("all" | Difficulty)[]).map((d) => (
+                <button
+                  key={d}
+                  className={`rounded-full px-3 py-1 ${diff === d ? "bg-gold text-ink" : "bg-cream/10"}`}
+                  onClick={() => setDiff(d)}
+                >
+                  {d === "all" ? "كل المستويات" : DIFFICULTIES.find((x) => x.id === d)!.label}{" "}
+                  <span className="num opacity-70">{d === "all" ? inCat.length : inCat.filter((q) => (q.difficulty ?? "medium") === d).length}</span>
+                </button>
+              ))}
             </div>
           )}
           {questions.map((q) => (
@@ -150,6 +168,17 @@ export default function ContentManager() {
                 <div className="text-xs text-cream/50">{QUESTION_TYPES.find((t) => t.id === q.type)?.label} · <span className="num">{q.points}</span></div>
                 <div className="font-semibold">{q.question}</div>
                 <div className="text-sm text-goldlight">← {q.answer}</div>
+                <div className="mt-1.5 flex gap-1" aria-label="الصعوبة">
+                  {DIFFICULTIES.map((d) => (
+                    <button
+                      key={d.id}
+                      className={`rounded-full px-2 py-0.5 text-xs ${(q.difficulty ?? "medium") === d.id ? DIFF_ON[d.id] : "bg-cream/5 text-cream/50"}`}
+                      onClick={() => (q.difficulty ?? "medium") !== d.id && save("question", { ...q, difficulty: d.id })}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
               </div>
               {q.imageUrl && (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -178,7 +207,7 @@ export default function ContentManager() {
               "question",
               q,
               another
-                ? { categoryId: q.categoryId, themeId: q.themeId, type: q.type, points: q.points ?? 100, active: true, options: ["", "", "", ""], correctOption: 0 }
+                ? { categoryId: q.categoryId, themeId: q.themeId, type: q.type, points: q.points ?? 100, active: true, options: ["", "", "", ""], correctOption: 0, difficulty: q.difficulty ?? "medium" }
                 : undefined,
             )
           }
@@ -305,6 +334,15 @@ function QuestionForm({
         )}
         <Label t={q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE" ? "الإجابة / توضيح (اختياري)" : "الإجابة"}>
           <input className="field" value={q.answer ?? ""} onChange={(e) => setQ({ ...q, answer: e.target.value })} />
+        </Label>
+        <Label t="الصعوبة">
+          <div className="grid grid-cols-3 gap-2">
+            {DIFFICULTIES.map((d) => (
+              <button key={d.id} className={`btn py-2 ${(q.difficulty ?? "medium") === d.id ? "btn-gold" : "btn-ghost"}`} onClick={() => setQ({ ...q, difficulty: d.id })}>
+                {d.label}
+              </button>
+            ))}
+          </div>
         </Label>
         <Label t="النقاط"><input className="field num" type="number" value={q.points ?? 100} onChange={(e) => setQ({ ...q, points: Number(e.target.value) })} /></Label>
         <Label t="صورة (اختياري)">

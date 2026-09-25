@@ -575,3 +575,63 @@ textarea {
     transition-duration: 1ms !important;
   }
 }
+
+/* ─── V1.7: staged reactions (impact → main → freeze) ─────────────────────── */
+.rx-impact { position: absolute; inset: 0; z-index: 1; animation: rx-impact 700ms ease-out both; }
+.rx-impact-good { background: radial-gradient(circle at 50% 50%, rgba(255, 230, 150, 0.95), rgba(214, 166, 58, 0.35) 40%, transparent 70%); }
+.rx-impact-bad { background: radial-gradient(circle at 50% 50%, rgba(255, 120, 110, 0.8), rgba(120, 20, 20, 0.35) 45%, transparent 75%); }
+@keyframes rx-impact { 0% { opacity: 0; transform: scale(0.6); } 25% { opacity: 1; } 100% { opacity: 0.25; transform: scale(1.35); } }
+/* photo-worthy freeze: every animation inside stops where it is, with a camera flash + frame */
+.rx-freeze-frame, .rx-freeze-frame * { animation-play-state: paused !important; }
+.rx-freeze-frame { outline: 0.6vmin solid rgba(246, 240, 225, 0.85); outline-offset: 2vmin; border-radius: 2vmin; }
+.rx-camera-flash { position: absolute; inset: 0; z-index: 5; pointer-events: none; background: #fff; animation: rx-camera-flash 450ms ease-out both; }
+@keyframes rx-camera-flash { from { opacity: 0.85; } to { opacity: 0; } }
+/* new character moves */
+.rx-bow { animation: rx-bow 1600ms ease-in-out both; transform-origin: 50% 90%; }
+@keyframes rx-bow { 0% { transform: none; } 35%, 70% { transform: rotate(0) scale(1, 0.82) translateY(6%); } 45%, 60% { transform: rotate(-3deg) scale(1, 0.8) translateY(7%); } 100% { transform: none; } }
+.rx-swagger { animation: rx-swagger 2200ms cubic-bezier(0.3, 0.6, 0.4, 1) both; }
+@keyframes rx-swagger {
+  0% { transform: translateX(-60vw); }
+  15%, 35%, 55% { transform: translateX(-40vw) rotate(-5deg) translateY(-6px); }
+  25%, 45%, 65% { transform: translateX(-20vw) rotate(5deg); }
+  85% { transform: translateX(0) rotate(0); }
+  92% { transform: translateX(0) rotate(-8deg) scale(1.05); }
+  100% { transform: translateX(0) rotate(0); }
+}
+.rx-ride { animation: rx-ride 2600ms ease-in-out both; }
+@keyframes rx-ride { 0% { transform: translateX(-80vw); } 20%, 40%, 60% { transform: translateX(-30vw) translateY(-12px); } 30%, 50% { transform: translateX(-10vw) translateY(0); } 75%, 100% { transform: translateX(0); } }
+.rx-walkaway { animation: rx-walkaway 3000ms linear both; transform-origin: 50% 100%; }
+@keyframes rx-walkaway { 0%, 20% { transform: none; filter: saturate(0.7); } 30% { transform: rotate(-3deg) scale(0.98); } 100% { transform: translateX(45vw) scale(0.8) rotate(2deg); filter: saturate(0.4); } }
+.rx-collapse { animation: rx-collapse 1400ms cubic-bezier(0.5, 0, 0.3, 1.2) both; transform-origin: 50% 100%; }
+@keyframes rx-collapse { 0% { transform: none; } 30% { transform: rotate(8deg) translateY(-4%); } 55% { transform: rotate(-10deg); } 100% { transform: rotate(-86deg) translateX(-10%) translateY(8%); filter: saturate(0.5); } }
+.rx-hide { animation: rx-hide 1500ms ease-in-out both; transform-origin: 50% 100%; }
+@keyframes rx-hide { 0% { transform: none; } 40% { transform: scale(0.95, 0.8); } 100% { transform: scale(0.8, 0.62) translateY(4%); filter: brightness(0.8); } }
+.rx-bonked { animation: rx-bonked 1600ms ease-out both; transform-origin: 50% 100%; }
+@keyframes rx-bonked { 0%, 35% { transform: none; } 42% { transform: scale(1.15, 0.7); } 60% { transform: scale(0.95, 1.05); } 100% { transform: scale(1, 0.92) rotate(-4deg); } }
+.rx-dragged { animation: rx-dragged 2600ms cubic-bezier(0.6, 0, 0.8, 0.6) both; transform-origin: 50% 20%; }
+@keyframes rx-dragged { 0%, 30% { transform: none; } 45% { transform: rotate(-12deg) translateX(-4vw); } 100% { transform: rotate(-20deg) translateX(-70vw); } }
+.rx-stare { animation: rx-stare 1800ms ease-out both; }
+@keyframes rx-stare { 0% { transform: none; } 30% { transform: scale(1.1) translateY(-3%); } 100% { transform: scale(1.18) translateY(-4%); } }
+.rxp-point { animation: rxp-point 700ms ease-in-out infinite alternate; }
+@keyframes rxp-point { from { transform: translateX(0); } to { transform: translateX(14px); } }
+.rxp-wave { animation: rxp-wave 500ms ease-in-out infinite alternate; transform-origin: 20% 90%; }
+@keyframes rxp-wave { from { transform: rotate(-18deg); } to { transform: rotate(18deg); } }
+.rxs-selfie { position: absolute; inset: 0; z-index: 1; pointer-events: none; animation: rxs-selfie 2400ms steps(1) both; }
+@keyframes rxs-selfie { 0%, 30%, 34%, 62%, 66%, 100% { background: transparent; } 31%, 63% { background: rgba(255, 255, 255, 0.55); } }
+.rxs-bonk { position: absolute; z-index: 4; left: 50%; top: 8%; font-size: 14vmin; animation: rxs-bonk 1300ms cubic-bezier(0.5, 0, 0.7, 1.4) both; transform-origin: 80% 80%; }
+@keyframes rxs-bonk { 0% { transform: translate(-50%, -40vh) rotate(-60deg); } 45% { transform: translate(-50%, 10vh) rotate(20deg); } 60% { transform: translate(-50%, 6vh) rotate(-10deg); } 100% { transform: translate(-50%, -60vh) rotate(-40deg); } }
+.rxs-hook { position: absolute; z-index: 4; left: -10%; top: 40%; font-size: 16vmin; animation: rxs-hook 2600ms ease-in both; }
+@keyframes rxs-hook { 0% { transform: translateX(0); } 35% { transform: translateX(48vw); } 45% { transform: translateX(46vw); } 100% { transform: translateX(-30vw); } }
+.rxs-noticed { position: absolute; z-index: 4; right: 6%; bottom: 20%; font-size: 12vmin; animation: rxs-noticed 3000ms ease-out both; }
+@keyframes rxs-noticed { 0%, 55% { opacity: 0; transform: scale(0.4); } 65% { opacity: 1; transform: scale(1.25); } 75%, 100% { opacity: 1; transform: scale(1) rotate(-6deg); } }
+
+/* ─── V1.7: "waiting for the presenter" — alive, never dead ───────────────── */
+.wait-breathe { animation: wait-breathe 2400ms ease-in-out infinite; }
+@keyframes wait-breathe { 0%, 100% { opacity: 0.65; transform: scale(1); } 50% { opacity: 1; transform: scale(1.04); } }
+.wait-dots::after { content: ""; display: inline-block; width: 1.2em; text-align: start; animation: wait-dots 1500ms steps(4) infinite; }
+@keyframes wait-dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+.intro-sweep { animation: intro-sweep 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes intro-sweep { from { opacity: 0; transform: translateY(6vh) scale(0.9); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .wait-breathe, .rx-impact, .rx-camera-flash { animation: none; }
+}

@@ -35,6 +35,8 @@ export interface Store {
   putMedia(id: string, media: Media): Promise<void>;
   /** Idempotent additive content import (Supabase only). */
   ensureContent?(): Promise<void>;
+  /** V1.7: where question difficulty lives ("column" after the migration, else a fallback) */
+  difficultyStorage(): Promise<"column" | "fallback" | "memory">;
   getMedia(id: string): Promise<Media | null>;
 }
 

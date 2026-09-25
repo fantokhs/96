@@ -5,6 +5,7 @@ import { body, handle, json } from "@/lib/server/http";
 import { newId } from "@/lib/server/sessions";
 import { readyStore } from "@/lib/server/store";
 import { THEME } from "@/content/seed";
+import { isDifficulty } from "@/content/difficulty";
 import { timingSafeEqual } from "node:crypto";
 
 export const dynamic = "force-dynamic";
@@ -90,6 +91,8 @@ export async function POST(req: Request) {
         options,
         correctOption,
         active: q.active !== false,
+        // V1.7: new questions default to «متوسط»
+        difficulty: isDifficulty(q.difficulty) ? q.difficulty : "medium",
       });
       return json({ item: saved });
     }

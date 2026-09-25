@@ -2,6 +2,7 @@
 import type {
   Card,
   Category,
+  Difficulty,
   Game,
   GameEvent,
   HostAction,
@@ -24,12 +25,22 @@ export class GameError extends Error {
   }
 }
 
-export const VOTE_MS = 20_000;
+/** V1.7: generous category window — the host can close it early */
+export const VOTE_MS = 15_000;
 export const TIE_MS = 10_000;
 export const PICK_MS = 20_000;
-export const RESULT_MS = 5_500;
-/** 3-2-1 before answers/buzzes are accepted (protects against carry-over taps) */
-export const PREP_MS = 3_000;
+/** «تم اختيار …» 3-2-1 before card taps count (protects against carry-over taps) */
+export const REVEAL_MS = 3_000;
+/** «جاوب الآن!» flash after the host starts the time */
+export const GO_MS = 1_200;
+/** fastest-finger: «3-2-1 انطلق!» after the host starts the challenge */
+export const BUZZER_GO_MS = 3_000;
+/** the host can't skip the reaction before this */
+export const RESULT_LOCK_MS = 1_500;
+/** safety net only: an idle result moves on by itself after a minute */
+export const RESULT_FALLBACK_MS = 60_000;
+/** kept for compatibility: the prep after «ابدأ الوقت» */
+export const PREP_MS = GO_MS;
 export const STEAL_PREP_MS = 2_000;
 export const REOPEN_PREP_MS = 1_500;
 export const TIEBREAK_MS = 3_000;
@@ -53,6 +64,49 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export const TRUE_FALSE_OPTIONS = ["صح", "خطأ"];
+
+// ─── Game length / difficulty curve (V1.7) ─────────────────────────────────
+
+/** Even lengths only: two teams always get the same number of primary turns. */
+export const GAME_LENGTHS = [10, 16, 22] as const;
+
+/** Old sessions (15 / 20 or anything else) map to the nearest supported even length. */
+export function normalizeLength(n: number | null | undefined): number {
+  const v = Number(n) || 16;
+  if (v <= 12) return 10;
+  if (v <= 18) return 16;
+  return 22;
+}
+
+const LEVEL: Record<Difficulty, number> = { easy: 0, medium: 1, hard: 2 };
+export const levelOf = (q: Pick<Question, "difficulty">): Difficulty => q.difficulty ?? "medium";
+
+/**
+ * Per-turn target difficulty: easy early, medium in the middle, hard late —
+ * with the block edges softened so it doesn't feel mechanical.
+ * 10 → 4/4/2, 16 → 6/6/4, 22 → 8/8/6.
+ */
+export function difficultyPlan(total: number): Difficulty[] {
+  const fixed: Record<number, [number, number, number]> = { 10: [4, 4, 2], 16: [6, 6, 4], 22: [8, 8, 6] };
+  const t = Math.max(1, Math.round(total));
+  const [e, m, h] = fixed[t] ?? (() => {
+    const ee = Math.round(t * 0.38);
+    const hh = Math.round(t * 0.25);
+    return [ee, Math.max(0, t - ee - hh), hh];
+  })();
+  const plan: Difficulty[] = [...Array(e).fill("easy"), ...Array(m).fill("medium"), ...Array(h).fill("hard")];
+  const swap = (i: number) => {
+    if (i > 0 && i < plan.length) [plan[i - 1], plan[i]] = [plan[i], plan[i - 1]];
+  };
+  if (e > 1 && m > 1) swap(e);
+  if (m > 1 && h > 1) swap(e + m);
+  return plan;
+}
+
+export function targetDifficulty(g: Game): Difficulty {
+  const plan = difficultyPlan(g.settings.totalQuestions ?? 16);
+  return plan[Math.min(g.turn.questionsPlayed, plan.length - 1)] ?? "medium";
+}
 
 // ─── Timers ─────────────────────────────────────────────────────────────────
 
@@ -288,6 +342,12 @@ function gameOver(g: Game) {
   emit(g, { kind: "gameover" });
 }
 
+/** Opening screen: «خيمة الفنتوخ — الجولة الأولى — جاهزين؟» until the host begins. */
+function enterIntro(g: Game) {
+  g.phase = { name: "INTRO" };
+  emit(g, { kind: "intro" });
+}
+
 function startTurn(g: Game, now: number, rng: Rng) {
   if (isOver(g)) return gameOver(g);
   const available = availableCategories(g);
@@ -316,9 +376,10 @@ function selectCategory(g: Game, teamId: string, categoryId: string, now: number
   enterCardPick(g, teamId, categoryId, now, rng);
 }
 
-function enterCardPick(g: Game, teamId: string, categoryId: string, now: number, rng: Rng) {
+function enterCardPick(g: Game, teamId: string, categoryId: string, now: number, rng: Rng, reveal = true) {
   ensureBoard(g, categoryId, rng);
-  g.phase = { name: "CARD_PICK", teamId, categoryId, timer: newTimer(PICK_MS, now, g.paused) };
+  const start = reveal ? now + REVEAL_MS : now;
+  g.phase = { name: "CARD_PICK", teamId, categoryId, timer: newTimer(PICK_MS, start, g.paused), readyAt: start };
 }
 
 function advanceTurn(g: Game, now: number, rng: Rng, counted: boolean) {
@@ -327,12 +388,13 @@ function advanceTurn(g: Game, now: number, rng: Rng, counted: boolean) {
   startTurn(g, now, rng);
 }
 
-function flipCard(g: Game, index: number, now: number) {
+function flipCard(g: Game, index: number, now: number, rng: Rng) {
   if (g.phase.name !== "CARD_PICK") throw new GameError("ليس وقت اختيار الكرت");
   const { teamId, categoryId } = g.phase;
   const card = g.boards[categoryId]?.[index];
   if (!card || card.used) throw new GameError("هذا الكرت مستخدم");
   if (categoryId === PERSONAL) avoidOwnTeam(g, card, teamId);
+  else pickByDifficulty(g, card, categoryId, rng);
   card.used = true;
   g.usedQuestionIds.push(card.questionId);
   g.turn.categoryUsesLeft = Math.max(0, g.turn.categoryUsesLeft - 1);
@@ -343,16 +405,56 @@ function flipCard(g: Game, index: number, now: number) {
     categoryId,
     cardIndex: index,
     questionId: card.questionId,
-    // the clock starts after the 3-2-1 prep
-    timer: newTimer(g.settings.questionSeconds * 1000, now + PREP_MS, g.paused),
+    // V1.7: the question waits for the presenter («ابدأ الوقت») — the family reads & argues
+    timer: heldTimer(g.settings.questionSeconds * 1000),
     buzzer: buzzer ? { lockedBy: null, excludedTeamIds: [] } : null,
     attempt: null,
-    readyAt: now + PREP_MS,
     votes: {},
     tie: false,
     stuck: false,
+    hold: true,
   };
   emit(g, { kind: "flip", teamId });
+}
+
+function heldTimer(ms: number): Timer {
+  return { durationMs: ms, endsAt: null, remainingMs: ms, held: true };
+}
+
+/** Host «ابدأ الوقت» / «ابدأ التحدي»: a short go-flash, then answers/buzzes count. */
+function startQuestionTimer(g: Game, now: number) {
+  const p = g.phase;
+  if (p.name !== "QUESTION" || !p.hold) throw new GameError("الوقت شغّال");
+  const go = p.buzzer ? BUZZER_GO_MS : GO_MS;
+  const ms = p.timer.remainingMs ?? p.timer.durationMs;
+  p.hold = false;
+  p.readyAt = now + go;
+  p.timer = { ...newTimer(ms, now + go, g.paused), durationMs: ms };
+  emit(g, { kind: "go", teamId: p.teamId });
+}
+
+/**
+ * Difficulty curve inside the chosen category: the flipped card gets the unused question
+ * closest to this turn's target (face-down cards are indistinguishable, so swapping is invisible).
+ */
+function pickByDifficulty(g: Game, card: Card, categoryId: string, rng: Rng) {
+  const target = LEVEL[targetDifficulty(g)];
+  const board = g.boards[categoryId] ?? [];
+  const pool: { id: string; card?: Card }[] = [
+    { id: card.questionId, card },
+    ...board.filter((c) => !c.used && c !== card).map((c) => ({ id: c.questionId, card: c })),
+    ...unusedQuestionIds(g, categoryId).map((id) => ({ id })),
+  ].filter((x) => g.content.questions[x.id]);
+  if (pool.length < 2) return;
+  const dist = (id: string) => Math.abs(LEVEL[levelOf(g.content.questions[id])] - target);
+  const best = Math.min(...pool.map((x) => dist(x.id)));
+  const own = pool[0];
+  if (dist(own.id) === best && rng() < 0.5) return; // keep some of the card's own randomness
+  const candidates = pool.filter((x) => dist(x.id) === best);
+  const pick = candidates[Math.floor(rng() * candidates.length)];
+  if (pick.id === card.questionId) return;
+  if (pick.card) [card.questionId, pick.card.questionId] = [pick.card.questionId, card.questionId];
+  else card.questionId = pick.id;
 }
 
 /** Prefer not to ask a team about one of its own live players (when another question exists). */
@@ -392,7 +494,8 @@ function finish(g: Game, outcome: Outcome, scorer: string | null, points: number
     activeTeamId,
     categoryId: p.categoryId,
     questionId: p.questionId,
-    timer: newTimer(RESULT_MS, now, g.paused),
+    timer: newTimer(RESULT_FALLBACK_MS, now, g.paused),
+    lockUntil: now + RESULT_LOCK_MS,
   };
   emit(g, {
     kind: outcome === "steal" ? "steal" : outcome === "correct" ? "correct" : outcome === "skipped" ? "skip" : "wrong",
@@ -628,7 +731,7 @@ function resumeAll(g: Game, now: number) {
   if (!g.paused) return;
   g.paused = false;
   const p = g.phase as Phase & { timer?: Timer };
-  if (p.timer && !p.timer.stopped && p.timer.endsAt === null) {
+  if (p.timer && !p.timer.stopped && !p.timer.held && p.timer.endsAt === null) {
     p.timer = { ...p.timer, endsAt: now + (p.timer.remainingMs ?? 0), remainingMs: null };
   }
   emit(g, { kind: "resume" });
@@ -657,10 +760,33 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
       for (const pl of g.players) if (!pl.teamId) pl.teamId = smallestTeam(g, rng).id;
       g.turn = { activeTeamIndex: 0, questionsPlayed: 0, currentCategoryId: null, categoryUsesLeft: 0 };
       g.draft = false; // a started session is never a draft
+      // equal primary turns for both teams: an odd length (old 15) rounds up
+      if (g.settings.totalQuestions && g.settings.totalQuestions % 2) g.settings.totalQuestions += 1;
+      g.settings.targetScore = null;
       emit(g, { kind: "start" });
+      enterIntro(g);
+      break;
+    }
+    case "begin_round": {
+      if (p.name !== "INTRO") throw new GameError("الجولة بدأت");
       startTurn(g, now, rng);
       break;
     }
+    case "close_vote": {
+      if (p.name !== "CATEGORY_VOTE") throw new GameError("ما فيه تصويت الآن");
+      resolveVote(g, now, rng, true);
+      break;
+    }
+    case "reveal_card": {
+      if (p.name !== "CARD_PICK") throw new GameError("ليس وقت اختيار الكرت");
+      const free = (g.boards[p.categoryId] ?? []).map((c, i) => (c.used ? -1 : i)).filter((i) => i >= 0);
+      if (free.length === 0) throw new GameError("لا توجد كروت");
+      flipCard(g, free[Math.floor(rng() * free.length)], now, rng);
+      break;
+    }
+    case "start_timer":
+      startQuestionTimer(g, now);
+      break;
     case "move_player": {
       const pl = g.players.find((x) => x.id === action.playerId);
       if (!pl) throw new GameError("اللاعب غير موجود");
@@ -684,7 +810,7 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
       break;
     }
     case "pick_card":
-      flipCard(g, action.index, now);
+      flipCard(g, action.index, now, rng);
       break;
     case "correct":
       markCorrect(g, now);
@@ -701,21 +827,26 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
       const card = g.boards[p.categoryId]?.[p.cardIndex];
       if (card) card.outcome = "skipped";
       g.turn.categoryUsesLeft += 1;
-      if (remainingInCategory(g, p.categoryId) > 0) enterCardPick(g, teamId, p.categoryId, now, rng);
+      if (remainingInCategory(g, p.categoryId) > 0) enterCardPick(g, teamId, p.categoryId, now, rng, false);
       else startTurn(g, now, rng);
       emit(g, { kind: "skip", teamId });
       break;
     }
+    // A skipped turn still counts as that team's primary turn, so both teams
+    // always get the same number of turns (10 → 5/5, 16 → 8/8, 22 → 11/11).
     case "skip": {
       if (p.name === "QUESTION" || p.name === "STEAL") finish(g, "skipped", null, 0, now);
-      else if (p.name === "CATEGORY_VOTE" || p.name === "CARD_PICK") advanceTurn(g, now, rng, false);
+      else if (p.name === "CATEGORY_VOTE" || p.name === "CARD_PICK") advanceTurn(g, now, rng, true);
       else throw new GameError("لا يمكن التخطي الآن");
       break;
     }
     case "next": {
-      if (p.name === "RESULT") advanceTurn(g, now, rng, true);
+      if (p.name === "RESULT") {
+        if (p.lockUntil && now < p.lockUntil) throw new GameError("لحظة… خلّهم يشوفون ردة الفعل 😄");
+        advanceTurn(g, now, rng, true);
+      } else if (p.name === "INTRO") startTurn(g, now, rng);
       else if (p.name === "QUESTION" || p.name === "STEAL") finish(g, "skipped", null, 0, now);
-      else if (p.name === "CATEGORY_VOTE" || p.name === "CARD_PICK") advanceTurn(g, now, rng, false);
+      else if (p.name === "CATEGORY_VOTE" || p.name === "CARD_PICK") advanceTurn(g, now, rng, true);
       else throw new GameError("لا يمكن الانتقال الآن");
       break;
     }
@@ -816,13 +947,18 @@ export function applyPlayer(prev: Game, playerId: string, action: PlayerAction, 
       if (me.teamId !== p.teamId) throw new GameError("ليس دور فريقك");
       if (!p.options.includes(action.categoryId)) throw new GameError("فئة غير متاحة");
       p.votes[me.id] = action.categoryId;
-      if (allVoted(g)) resolveVote(g, now, rng, false);
+      // V1.7: don't jump away when everyone voted — the presenter reveals it («اعرض النتيجة»)
+      if (!p.complete && allVoted(g)) {
+        p.complete = true;
+        emit(g, { kind: "voted", teamId: p.teamId });
+      }
       break;
     }
     case "pick_card": {
       if (p.name !== "CARD_PICK") throw new GameError("ليس وقت اختيار الكرت");
       if (me.teamId !== p.teamId) throw new GameError("ليس دور فريقك");
-      flipCard(g, action.index, now);
+      if (p.readyAt && now < p.readyAt) throw new GameError("لحظة… استعدوا");
+      flipCard(g, action.index, now, rng);
       break;
     }
     case "answer": {
@@ -832,6 +968,7 @@ export function applyPlayer(prev: Game, playerId: string, action: PlayerAction, 
       if (me.teamId !== p.teamId) throw new GameError("ليس دور فريقك");
       if (p.attempt) throw new GameError("تم اعتماد إجابة الفريق");
       if (g.paused) throw new GameError("اللعبة متوقفة");
+      if (p.name === "QUESTION" && p.hold) throw new GameError("انتظر المقدم…");
       if (p.readyAt && now < p.readyAt) throw new GameError("استعدوا… انتظر «جاوب الآن»");
       if (p.stuck) throw new GameError("المضيف يحسم التعادل");
       const q = questionOf(g, p.questionId);
@@ -848,6 +985,7 @@ export function applyPlayer(prev: Game, playerId: string, action: PlayerAction, 
       if (p.name !== "QUESTION" || !p.buzzer) throw new GameError("الزر غير متاح");
       if (g.paused) throw new GameError("اللعبة متوقفة");
       if (p.buzzer.lockedBy) throw new GameError("سبقك أحد!");
+      if (p.hold) throw new GameError("انتظر المقدم…");
       if (p.readyAt && now < p.readyAt) throw new GameError("انتظر «انطلق!»");
       if (!me.teamId || p.buzzer.excludedTeamIds.includes(me.teamId)) throw new GameError("فريقك خارج هذه المحاولة");
       p.buzzer.lockedBy = { playerId: me.id, teamId: me.teamId, at: now };
@@ -880,7 +1018,7 @@ export function applyTick(prev: Game, now: number, rng: Rng = Math.random): Game
     const board = g.boards[p.categoryId] ?? [];
     const free = board.map((c, i) => (c.used ? -1 : i)).filter((i) => i >= 0);
     if (free.length === 0) startTurn(g, now, rng);
-    else flipCard(g, free[Math.floor(rng() * free.length)], now);
+    else flipCard(g, free[Math.floor(rng() * free.length)], now, rng);
     return g;
   }
   if (
@@ -1004,7 +1142,7 @@ export function reconfigure(prev: Game, input: ReconfigureInput): Game {
   g.categoryIds = fresh.categoryIds;
   g.settings = {
     ...g.settings,
-    totalQuestions: input.totalQuestions,
+    totalQuestions: normalizeLength(input.totalQuestions),
     targetScore: null,
     voteEvery: 1,
     personalEnabled: input.personalEnabled,

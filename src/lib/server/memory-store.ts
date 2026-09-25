@@ -1,5 +1,6 @@
 // In-process store for local development / single-machine play.
 import { SEED_CATEGORIES, SEED_QUESTIONS } from "../../content/seed";
+import { withDifficulty } from "../../content/difficulty";
 import type { Category, Game, Question } from "../game/types";
 import type { Media, SessionRecord, Store } from "./store";
 
@@ -7,7 +8,7 @@ export class MemoryStore implements Store {
   readonly kind = "memory" as const;
   private sessions = new Map<string, SessionRecord>();
   private categories = new Map<string, Category>(SEED_CATEGORIES.map((c) => [c.id, c]));
-  private questions = new Map<string, Question>(SEED_QUESTIONS.map((q) => [q.id, q]));
+  private questions = new Map<string, Question>(withDifficulty(SEED_QUESTIONS).map((q) => [q.id, q]));
   private media = new Map<string, Media>();
   private touched = new Map<string, number>();
 
@@ -41,6 +42,10 @@ export class MemoryStore implements Store {
   async deleteSession(code: string) {
     this.sessions.delete(code);
     this.touched.delete(code);
+  }
+
+  async difficultyStorage() {
+    return "memory" as const;
   }
 
   async listCategories(opts: { themeId?: string; includeInactive?: boolean } = {}) {

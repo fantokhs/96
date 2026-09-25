@@ -6,6 +6,7 @@ import { patternBg } from "@/components/patterns";
 import { APP_VERSION, Logo96, Spinner } from "@/components/ui";
 import { api, ApiError, local } from "@/lib/client/api";
 import { forgetGame, recentGames, rememberGame, type RecentGame } from "@/lib/client/recent";
+import { normalizeLength } from "@/lib/game/engine";
 import type { HostView, PatternId } from "@/lib/game/types";
 
 interface CatInfo {
@@ -27,7 +28,8 @@ interface KnowCounts {
 const THEME_ID = "national-day-96";
 const DEFAULT_NAMES = ["الصقور", "الذيابة"];
 const TEAM_COLORS = ["#22A06B", "#D6A63A"];
-const LENGTHS = [10, 15, 20];
+// V1.7: even lengths only — both teams get the same number of turns (5/5, 8/8, 11/11)
+const LENGTHS = [10, 16, 22];
 
 export default function AdminCreate() {
   const router = useRouter();
@@ -36,7 +38,7 @@ export default function AdminCreate() {
   const [name, setName] = useState("خيمة الفنتوخ");
   const [teamNames, setTeamNames] = useState(DEFAULT_NAMES);
   const [selected, setSelected] = useState<string[] | null>(null);
-  const [length, setLength] = useState(15);
+  const [length, setLength] = useState(16);
   const [personal, setPersonal] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -87,7 +89,8 @@ export default function AdminCreate() {
         setTeamNames([0, 1].map((i) => g.teams[i]?.name ?? DEFAULT_NAMES[i]));
         const ids = g.categories.map((x) => x.id).filter((id) => id !== "personal");
         if (!g.draft && ids.length) setSelected(ids);
-        setLength(LENGTHS.includes(g.settings.totalQuestions ?? 0) ? g.settings.totalQuestions! : 15);
+        // old V1.6 sessions: 15 → 16, 20 → 22
+        setLength(normalizeLength(g.settings.totalQuestions));
         setPersonal(g.settings.personalEnabled !== false);
       }
       return g;
@@ -103,7 +106,7 @@ export default function AdminCreate() {
     if (!c) {
       setName("خيمة الفنتوخ");
       setTeamNames(DEFAULT_NAMES);
-      setLength(15);
+      setLength(16);
       setPersonal(true);
       setSelected(content ? content.filter((x) => x.count > 0).map((x) => x.id) : null);
       return;

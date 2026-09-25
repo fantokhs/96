@@ -22,10 +22,12 @@ import type { HostAction, HostView, PublicPhase, SoundboardSfx } from "@/lib/gam
 import { INVITE_TEXT } from "@/lib/personal";
 
 type Phase<N extends PublicPhase["name"]> = Extract<PublicPhase, { name: N }>;
+const DIFF_LABEL = { easy: "سهل", medium: "متوسط", hard: "صعب" } as const;
 type Send = (a: HostAction) => Promise<void>;
 
 const PHASE_LABEL: Record<PublicPhase["name"], string> = {
   LOBBY: "الانتظار",
+  INTRO: "الافتتاح",
   CATEGORY_VOTE: "تصويت الفئة",
   CARD_PICK: "اختيار الكرت",
   QUESTION: "السؤال",
@@ -288,10 +290,11 @@ function HostConsoleInner({ code, token, onUnauthorized }: { code: string; token
 
       <section className="panel flex flex-col gap-4 p-4">
         {p.name === "LOBBY" && <LobbyPanel game={game} send={send} links={links} busy={busy} />}
-        {p.name === "CATEGORY_VOTE" && <VotePanel game={game} phase={p} send={send} now={now} />}
-        {p.name === "CARD_PICK" && <CardPanel game={game} phase={p} send={send} now={now} />}
+        {p.name === "INTRO" && <IntroPanel game={game} send={send} busy={busy} />}
+        {p.name === "CATEGORY_VOTE" && <VotePanel game={game} phase={p} send={send} now={now} busy={busy} />}
+        {p.name === "CARD_PICK" && <CardPanel game={game} phase={p} send={send} now={now} busy={busy} />}
         {(p.name === "QUESTION" || p.name === "STEAL") && <QuestionPanel game={game} phase={p} send={send} now={now} busy={busy} />}
-        {p.name === "RESULT" && <ResultPanel game={game} phase={p} send={send} />}
+        {p.name === "RESULT" && <ResultPanel game={game} phase={p} send={send} now={now} busy={busy} />}
         {p.name === "GAME_OVER" && <OverPanel game={game} phase={p} send={send} />}
       </section>
 
@@ -832,7 +835,26 @@ function PlayersEditor({ game, send }: { game: HostView; send: Send }) {
   );
 }
 
-function VotePanel({ game, phase, send, now }: { game: HostView; phase: Phase<"CATEGORY_VOTE">; send: Send; now: () => number }) {
+/** V1.7 opening: the TV shows «الجولة الأولى — جاهزين؟» until the presenter begins. */
+function IntroPanel({ game, send, busy }: { game: HostView; send: Send; busy: boolean }) {
+  return (
+    <>
+      <div className="text-center">
+        <div className="text-sm text-cream/60">على التلفزيون الحين</div>
+        <div className="mt-1 text-2xl font-black">الجولة الأولى</div>
+        <div className="mt-1 text-lg">
+          {game.teams[0]?.name} <span className="text-cream/50">ضد</span> {game.teams[1]?.name}
+        </div>
+        <div className="mt-2 text-cream/70">رحّب بالعائلة، عرّف الفرق… ولما يجهزون:</div>
+      </div>
+      <button className="btn btn-gold py-5 text-2xl" disabled={busy} onClick={() => send({ type: "begin_round" })}>
+        ابدأ الجولة
+      </button>
+    </>
+  );
+}
+
+function VotePanel({ game, phase, send, now, busy }: { game: HostView; phase: Phase<"CATEGORY_VOTE">; send: Send; now: () => number; busy: boolean }) {
   const team = teamById(game.teams, phase.teamId)!;
   const members = game.players.filter((pl) => pl.teamId === team.id);
   return (
@@ -847,67 +869,92 @@ function VotePanel({ game, phase, send, now }: { game: HostView; phase: Phase<"C
         </div>
         <TimerRing timer={phase.timer} now={now} size={64} />
       </div>
-      <div className="text-sm font-semibold text-cream/70">اختيار الفئة يدوياً</div>
-      <div className="grid grid-cols-2 gap-2">
-        {phase.options.map((id) => {
-          const c = game.categories.find((x) => x.id === id)!;
-          return (
-            <button
-              key={id}
-              className="flex items-center justify-between rounded-xl px-3 py-3 text-right font-bold"
-              style={{ backgroundColor: c.color, backgroundImage: patternBg(c.pattern, "rgba(255,255,255,.14)") }}
-              onClick={() => send({ type: "override_category", categoryId: id })}
-            >
-              <span>
-                {c.name}
-                <span className="block text-xs font-normal opacity-80">
-                  متبقي <span className="num">{game.host.remaining[id]}</span>
+      {phase.complete ? (
+        <>
+          <div className="rounded-xl bg-leaf/25 px-3 py-2 text-center font-bold">اكتمل التصويت ✓</div>
+          <button className="btn btn-gold py-4 text-xl" disabled={busy} onClick={() => send({ type: "close_vote" })}>
+            اعرض النتيجة
+          </button>
+        </>
+      ) : (
+        <button className="btn btn-gold py-4 text-xl" disabled={busy} onClick={() => send({ type: "close_vote" })}>
+          اعتماد التصويت الآن
+        </button>
+      )}
+      <details>
+        <summary className="cursor-pointer text-sm font-semibold text-cream/60">اختيار الفئة يدوياً</summary>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {phase.options.map((id) => {
+            const c = game.categories.find((x) => x.id === id)!;
+            return (
+              <button
+                key={id}
+                className="flex items-center justify-between rounded-xl px-3 py-3 text-right font-bold"
+                style={{ backgroundColor: c.color, backgroundImage: patternBg(c.pattern, "rgba(255,255,255,.14)") }}
+                onClick={() => send({ type: "override_category", categoryId: id })}
+              >
+                <span>
+                  {c.name}
+                  <span className="block text-xs font-normal opacity-80">
+                    متبقي <span className="num">{game.host.remaining[id]}</span>
+                  </span>
                 </span>
-              </span>
-              <span className="num rounded-full bg-ink/40 px-2.5 py-0.5">{phase.counts[id] ?? 0}</span>
-            </button>
-          );
-        })}
-      </div>
-      <button className="btn btn-ghost" onClick={() => send({ type: "skip" })}>
-        تخطي الدور
-      </button>
+                <span className="num rounded-full bg-ink/40 px-2.5 py-0.5">{phase.counts[id] ?? 0}</span>
+              </button>
+            );
+          })}
+        </div>
+        <button className="btn btn-ghost mt-2 w-full text-sm" onClick={() => send({ type: "skip" })}>
+          تخطي الدور
+        </button>
+      </details>
     </>
   );
 }
 
-function CardPanel({ game, phase, send, now }: { game: HostView; phase: Phase<"CARD_PICK">; send: Send; now: () => number }) {
+function CardPanel({ game, phase, send, now, busy }: { game: HostView; phase: Phase<"CARD_PICK">; send: Send; now: () => number; busy: boolean }) {
   const team = teamById(game.teams, phase.teamId)!;
   const c = game.categories.find((x) => x.id === phase.categoryId)!;
   const cards = game.boards[phase.categoryId] ?? [];
+  const reveal = useUntil(phase.readyAt, now);
   return (
     <>
       <div className="flex items-center justify-between">
         <div>
           <TeamBadge team={team} />
-          <div className="mt-1 font-bold">{c.name}</div>
+          <div className="mt-1 font-bold">
+            تم اختيار: <span style={{ color: c.color }}>{c.name}</span>
+          </div>
         </div>
-        <TimerRing timer={phase.timer} now={now} size={64} />
+        {reveal > 0 ? (
+          <span className="num text-4xl font-black text-goldlight">{Math.ceil(reveal / 1000)}</span>
+        ) : (
+          <TimerRing timer={phase.timer} now={now} size={64} />
+        )}
       </div>
-      <p className="text-sm text-cream/60">الفريق يختار من جواله — أو اختر عنهم:</p>
-      <div className="grid grid-cols-3 gap-2">
-        {cards.map((card, i) => (
-          <button
-            key={i}
-            disabled={card.used}
-            className="num aspect-[5/6] rounded-xl text-2xl font-bold disabled:opacity-25"
-            style={{ backgroundColor: c.color, backgroundImage: patternBg(c.pattern, "rgba(255,255,255,.18)") }}
-            onClick={() => send({ type: "pick_card", index: i })}
-          >
-            {i + 1}
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <button className="btn btn-ghost flex-1" onClick={() => send({ type: "skip" })}>
+      <p className="text-sm text-cream/60">الفريق يختار كرت من جواله — أو:</p>
+      <button className="btn btn-gold py-4 text-xl" disabled={busy} onClick={() => send({ type: "reveal_card" })}>
+        اعرض السؤال
+      </button>
+      <details>
+        <summary className="cursor-pointer text-sm font-semibold text-cream/60">اختيار كرت معيّن</summary>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          {cards.map((card, i) => (
+            <button
+              key={i}
+              disabled={card.used}
+              className="num aspect-[5/6] rounded-xl text-2xl font-bold disabled:opacity-25"
+              style={{ backgroundColor: c.color, backgroundImage: patternBg(c.pattern, "rgba(255,255,255,.18)") }}
+              onClick={() => send({ type: "pick_card", index: i })}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+        <button className="btn btn-ghost mt-2 w-full text-sm" onClick={() => send({ type: "skip" })}>
           تخطي الدور
         </button>
-      </div>
+      </details>
     </>
   );
 }
@@ -938,6 +985,8 @@ function QuestionPanel({
   const vote = phase.teamVote;
   const counts = game.host.voteCounts;
   const prepLeft = useUntil(phase.readyAt, now);
+  const hold = phase.name === "QUESTION" && phase.hold;
+  const diff = game.host.difficulty;
 
   return (
     <>
@@ -951,6 +1000,11 @@ function QuestionPanel({
               <span className="font-bold text-gold">⚡ سرقة: {team.name}</span>
             ) : (
               <TeamBadge team={team} className="text-sm" />
+            )}
+            {diff && (
+              <span className="rounded-full bg-cream/8 px-2 py-0.5 text-xs text-cream/55" title="مستوى السؤال (للمقدم فقط)">
+                {DIFF_LABEL[diff]}
+              </span>
             )}
           </div>
           <p className="mt-2 text-lg leading-snug font-semibold">{q.question}</p>
@@ -968,9 +1022,35 @@ function QuestionPanel({
         <div className="text-2xl font-bold text-goldlight">{game.host.answer}</div>
       </div>
 
-      {prepLeft > 0 && (
+      {hold && (
+        <div className="flex flex-col gap-2 rounded-2xl bg-ink/50 p-3 ring-1 ring-gold/40">
+          <p className="text-center text-sm text-cream/70">
+            {buzzer ? "التلفزيون يعرض «استعدوا» — لما يجهز الكل:" : "اقرأ السؤال، خلّهم يتناقشون… ولما تبي:"}
+          </p>
+          <button className="btn btn-gold py-5 text-2xl" disabled={busy} onClick={() => send({ type: "start_timer" })}>
+            {buzzer ? "ابدأ التحدي ⚡" : "ابدأ الوقت ⏱"}
+          </button>
+        </div>
+      )}
+      {!hold && prepLeft > 0 && (
         <div className="rounded-xl bg-ink/50 px-3 py-2 text-center font-bold text-goldlight">
-          استعدوا… <span className="num">{Math.ceil(prepLeft / 1000)}</span>
+          {buzzer ? (
+            <>
+              استعدوا… <span className="num">{Math.ceil(prepLeft / 1000)}</span>
+            </>
+          ) : (
+            "جاوب الآن!"
+          )}
+        </div>
+      )}
+      {!hold && !phase.timer.stopped && prepLeft === 0 && (
+        <div className="grid grid-cols-2 gap-2">
+          <button className="btn btn-ghost py-2 text-sm" disabled={busy} onClick={() => send({ type: game.paused ? "resume" : "pause" })}>
+            {game.paused ? "▶︎ استكمال الوقت" : "⏸ إيقاف الوقت"}
+          </button>
+          <button className="btn btn-ghost py-2 text-sm" disabled={busy} onClick={() => send({ type: "add_time", seconds: 5 })}>
+            ⏱ +5 ثواني
+          </button>
         </div>
       )}
 
@@ -1038,16 +1118,18 @@ function QuestionPanel({
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-2">
-        <button className="btn btn-green py-4 text-lg" disabled={busy} onClick={() => send({ type: "correct" })}>
-          ✓ إجابة صحيحة <span className="num">+{pts}</span>
-        </button>
-        <button className="btn btn-red py-4 text-lg" disabled={busy} onClick={() => send({ type: "wrong" })}>
-          ✕ {buzzer && locked ? "خطأ — افتح للباقين" : "إجابة خاطئة"}
-        </button>
-      </div>
+      {!hold && (
+        <div className="grid grid-cols-2 gap-2">
+          <button className="btn btn-green py-4 text-lg" disabled={busy} onClick={() => send({ type: "correct" })}>
+            ✓ إجابة صحيحة <span className="num">+{pts}</span>
+          </button>
+          <button className="btn btn-red py-4 text-lg" disabled={busy} onClick={() => send({ type: "wrong" })}>
+            ✕ {buzzer && locked ? "خطأ — افتح للباقين" : "إجابة خاطئة"}
+          </button>
+        </div>
+      )}
 
-      {!steal && !buzzer && (
+      {!steal && !buzzer && !hold && (
         <div className="flex flex-wrap gap-2">
           {stealTargets.map((t) => (
             <button
@@ -1075,8 +1157,9 @@ function QuestionPanel({
   );
 }
 
-function ResultPanel({ game, phase, send }: { game: HostView; phase: Phase<"RESULT">; send: Send }) {
+function ResultPanel({ game, phase, send, now, busy }: { game: HostView; phase: Phase<"RESULT">; send: Send; now: () => number; busy: boolean }) {
   const team = teamById(game.teams, phase.teamId);
+  const lock = useUntil(phase.lockUntil, now);
   const label =
     phase.outcome === "correct" ? "إجابة صحيحة" : phase.outcome === "steal" ? "سرقة ناجحة" : phase.outcome === "wrong" ? "إجابة خاطئة" : "تم التخطي";
   return (
@@ -1090,10 +1173,10 @@ function ResultPanel({ game, phase, send }: { game: HostView; phase: Phase<"RESU
         )}
         <div className="mt-3 text-cream/70">الإجابة: {phase.answer}</div>
       </div>
-      <button className="btn btn-gold py-4 text-xl" onClick={() => send({ type: "next" })}>
+      <button className="btn btn-gold py-4 text-xl" disabled={busy || lock > 0} onClick={() => send({ type: "next" })}>
         التالي ←
       </button>
-      <p className="text-center text-xs text-cream/40">ينتقل تلقائياً بعد ثوانٍ</p>
+      <p className="text-center text-xs text-cream/40">خلّهم يضحكون ويصوّرون 😄 — اللعبة تنتظرك</p>
     </>
   );
 }

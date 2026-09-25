@@ -132,6 +132,7 @@ game = withPersonal(game, PERSONAL_CATEGORY, genB.questions, links, true);
 assert.ok(game.categoryIds.includes("personal"), "category injected");
 assert.equal(game.players[0].profileId, links.pA, "live player linked to profile");
 game = applyHost(game, { type: "start" }, now);
+game = applyHost(game, { type: "begin_round" }, now);
 game = applyHost(game, { type: "override_category", categoryId: "personal" }, now);
 const board = game.boards.personal.map((c) => game.content.questions[c.questionId].about!.name);
 const counts = board.reduce<Record<string, number>>((m, x) => ((m[x] = (m[x] ?? 0) + 1), m), {});
@@ -143,6 +144,7 @@ game = applyHost(game, { type: "pick_card", index: azizCard }, now);
 const asked = game.phase.name === "QUESTION" ? game.content.questions[game.phase.questionId] : null;
 assert.notEqual(asked!.about!.name, "عزيز", "own-team question swapped for another person");
 // personal questions play exactly like normal ones (prep + team vote)
+game = applyHost(game, { type: "start_timer" }, now);
 now += PREP_MS;
 game = applyPlayer(game, "pA", { type: "answer", option: asked!.correctOption! }, now);
 assert.equal(game.phase.name, "RESULT");

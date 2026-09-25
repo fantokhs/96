@@ -63,6 +63,8 @@ export default function ScreenPage({ params }: { params: Promise<{ code: string 
     <main className="bg-majlis relative flex h-dvh w-screen flex-col overflow-hidden select-none" onClick={() => sfx?.unlock()}>
       {game.phase.name === "LOBBY" ? (
         <Lobby game={game} />
+      ) : game.phase.name === "INTRO" ? (
+        <Intro game={game} />
       ) : game.phase.name === "GAME_OVER" ? (
         <Finale game={game} phase={game.phase} sound={started && !muted && game.settings.soundOn} />
       ) : (
@@ -210,6 +212,48 @@ function Lobby({ game }: { game: PublicGame }) {
   );
 }
 
+// ─── V1.7 opening ───────────────────────────────────────────────────────────
+
+function Intro({ game }: { game: PublicGame }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 2600);
+    return () => clearTimeout(t);
+  }, []);
+  const [a, b] = game.teams;
+  return (
+    <div className="relative flex h-full w-full flex-col items-center justify-center gap-[4vmin] p-[5vmin] text-center">
+      <div className="rx-glow" />
+      <div className="intro-sweep relative">
+        <Logo96 size={Math.round(window.innerHeight * 0.2)} />
+      </div>
+      <div className="intro-sweep relative text-[9vmin] font-black text-goldlight" style={{ animationDelay: "500ms" }}>
+        الجولة الأولى
+      </div>
+      <div className="intro-sweep relative flex items-center gap-[4vmin] text-[7vmin] font-black" style={{ animationDelay: "1000ms" }}>
+        <span style={{ color: a?.color }}>{a?.name}</span>
+        <span className="text-[4vmin] text-cream/60">ضد</span>
+        <span style={{ color: b?.color }}>{b?.name}</span>
+      </div>
+      <div className="relative flex gap-[6vmin]">
+        {game.teams.map((t) => (
+          <div key={t.id} className="flex -space-x-[1.5vmin] rtl:space-x-reverse">
+            {game.players
+              .filter((p) => p.teamId === t.id)
+              .slice(0, 7)
+              .map((p, i) => (
+                <div key={p.id} className="anim-pop" style={{ animationDelay: `${1400 + i * 90}ms` }}>
+                  <Avatar player={p} color={t.color} size={Math.round(window.innerHeight * 0.075)} />
+                </div>
+              ))}
+          </div>
+        ))}
+      </div>
+      {ready && <div className="anim-stamp wait-breathe relative text-[10vmin] font-black">جاهزين؟</div>}
+    </div>
+  );
+}
+
 // ─── Top bar ────────────────────────────────────────────────────────────────
 
 function activeTeamId(p: PublicPhase): string | null {
@@ -348,7 +392,7 @@ function VoteStage({ game, phase, now }: { game: PublicGame; phase: Phase<"CATEG
           <div className="text-[5vmin] font-bold">
             دور <span style={{ color: team.color }}>{team.name}</span>
           </div>
-          <div className="text-[2.8vmin] text-cream/70">صوّتوا للفئة من جوالاتكم</div>
+          <div className="text-[3.4vmin] font-bold text-cream/85">اختاروا الفئة</div>
         </div>
         <TimerRing timer={phase.timer} now={now} size={Math.round(window.innerHeight * 0.11)} />
       </div>
@@ -359,6 +403,11 @@ function VoteStage({ game, phase, now }: { game: PublicGame; phase: Phase<"CATEG
       {phase.tie && (
         <div className="anim-stamp rounded-2xl bg-gold px-[4vmin] py-[1.4vmin] text-[3.6vmin] font-bold text-ink">
           تعادل التصويت — غيّروا صوتاً واحداً!
+        </div>
+      )}
+      {phase.complete && !phase.tie && (
+        <div className="wait-breathe rounded-full bg-leaf/40 px-[3vmin] py-[0.8vmin] text-[3vmin] font-bold">
+          اكتمل التصويت ✓ <span className="wait-dots text-cream/70">بانتظار المقدم</span>
         </div>
       )}
 
@@ -414,6 +463,23 @@ function CardStage({ game, phase, now }: { game: PublicGame; phase: Phase<"CARD_
   const c = catOf(game, phase.categoryId);
   const cards = game.boards[phase.categoryId] ?? [];
   const cols = cards.length <= 4 ? cards.length : Math.ceil(cards.length / 2);
+  const reveal = useUntil(phase.readyAt, now);
+  if (reveal > 0) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-[3vmin] text-center">
+        <span className="anim-rise text-[4.4vmin] font-bold text-cream/80">تم اختيار</span>
+        <span
+          className="anim-stamp rounded-[3vmin] px-[6vmin] py-[2.4vmin] text-[10vmin] font-black drop-shadow-xl"
+          style={{ backgroundColor: c.color, backgroundImage: patternBg(c.pattern, "rgba(255,255,255,.2)") }}
+        >
+          {c.name}
+        </span>
+        <span key={Math.ceil(reveal / 1000)} className="num anim-count text-[14vmin] leading-none font-black text-goldlight">
+          {Math.ceil(reveal / 1000)}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="flex h-full w-full flex-col items-center gap-[2.5vmin]">
       <div className="anim-rise flex items-center gap-[3vmin]">
@@ -472,6 +538,7 @@ function QuestionStage({
   const excluded = phase.name === "STEAL" ? phase.excludedOption : null;
   const readyAt = phase.name === "RESULT" ? 0 : phase.readyAt;
   const vote = phase.name === "RESULT" ? null : phase.teamVote;
+  const hold = phase.name === "QUESTION" && phase.hold;
   const prepLeft = useUntil(readyAt, now);
   const [goFlash, setGoFlash] = useState(false);
   const wasPrep = useRef(false);
@@ -482,6 +549,7 @@ function QuestionStage({
     }
     if (!wasPrep.current) return;
     wasPrep.current = false;
+    if (!buzzer) return; // normal questions show «جاوب الآن!» during the short prep itself
     setGoFlash(true);
     const t = setTimeout(() => setGoFlash(false), 1300);
     return () => clearTimeout(t);
@@ -523,7 +591,21 @@ function QuestionStage({
       </div>
 
       <aside className="flex w-[26vmin] shrink-0 flex-col items-center gap-[3vmin]">
-        {prepLeft > 0 ? (
+        {hold ? (
+          buzzer ? (
+            <div className="wait-breathe flex flex-col items-center gap-[1vmin] text-center">
+              <span className="text-[7vmin] font-black text-goldlight">استعدوا</span>
+              <span className="wait-dots text-[2.4vmin] text-cream/60">بانتظار المقدم</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-[2vmin] text-center">
+              {timer && <TimerRing timer={timer} now={now} size={Math.round(window.innerHeight * 0.14)} />}
+              <span className="wait-breathe wait-dots rounded-full bg-ink/50 px-[2vmin] py-[0.6vmin] text-[2.4vmin] text-cream/70">بانتظار المقدم</span>
+            </div>
+          )
+        ) : prepLeft > 0 && !buzzer ? (
+          <div className="anim-stamp rounded-[2vmin] bg-gold px-[2vmin] py-[1.4vmin] text-[5vmin] font-black text-ink">جاوب الآن!</div>
+        ) : prepLeft > 0 ? (
           <div className="flex flex-col items-center gap-[1vmin] text-center">
             <span className="text-[3.4vmin] font-bold text-cream/80">استعدوا…</span>
             <span key={Math.ceil(prepLeft / 1000)} className="num anim-count text-[16vmin] leading-none font-black text-goldlight">
@@ -554,10 +636,10 @@ function QuestionStage({
             <TeamBadge team={teamById(game.teams, phase.teamId)!} className="text-[3vmin]" />
           </div>
         ) : buzzer ? (
-          <BuzzerPanel game={game} buzzer={buzzer} />
+          hold ? null : <BuzzerPanel game={game} buzzer={buzzer} />
         ) : phase.name !== "RESULT" ? (
           <div className="flex flex-col items-center gap-[1vmin] text-center">
-            <span className="text-[2.4vmin] text-cream/60">يجاوب الآن</span>
+            <span className="text-[2.4vmin] text-cream/60">{hold ? "الدور على" : "يجاوب الآن"}</span>
             <TeamBadge team={team} className="text-[3.2vmin]" />
           </div>
         ) : null}

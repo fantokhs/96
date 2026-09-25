@@ -11,7 +11,7 @@ A real-time family party game for gatherings. The TV is the stage, every phone i
 - **Content manager**: `/admin/content`, protected by a PIN.
 - **Test bench**: `/dev/CODE` shows the TV and 4 phones on one screen.
 
-Version: **V1.6**
+Version: **V1.7**
 
 ---
 
@@ -82,7 +82,7 @@ LOBBY → CATEGORY_VOTE → CARD_PICK → QUESTION → (STEAL) → RESULT → ne
   - The host always sees the answer privately and has the final say.
 - **Steal**: after a miss the host presses سرقة. With 2 teams the other team gets it automatically; with 3 teams the host chooses which. The stealing team gets 10 seconds for +50.
 - **Fastest finger**: categories set to "⚡ أسرع إصبع" show a buzzer on every phone. The server locks the first press it receives. If that player answers wrong, the buzzer reopens for the other teams.
-- **End**: after 10, 15 or 20 questions, or when a team reaches a target score. The TV dims, counts down 3-2-1, then reveals the winner with confetti and fireworks.
+- **End**: after 10, 16 or 22 questions (even lengths, so both teams get the same number of turns). The TV dims, counts down 3-2-1, then reveals the winner with confetti and fireworks.
 
 Host safety controls: pause/resume, skip, cancel a question, ±50 score adjustment, move/remove/balance players, end the game (with confirmation), mute the TV.
 
@@ -153,3 +153,35 @@ Host safety controls: pause/resume, skip, cancel a question, ±50 score adjustme
   3. وش تعرف عنه؟: counts, share/copy, review.
 - **TV lobby:** only the family QR. It never shows the control link or PIN.
 - **Tests:** `node scripts/e2e-v16.mjs`.
+
+## V1.7: presenter-paced game show, longer reactions, difficulty curve
+
+- **The host sets the pace.** The engine still owns rules, votes, scores and sync, but important moments wait for the presenter:
+  1. «ابدأ اللعبة» opens the TV screen «الجولة الأولى — الصقور ضد الذيابة — جاهزين؟». The host presses «ابدأ الجولة».
+  2. Category vote: a 15-second window with «اعتماد التصويت الآن». If everyone votes early, the screen doesn't jump; the host sees «اكتمل التصويت» and presses «اعرض النتيجة».
+  3. «تم اختيار …» plus a 3-2-1 on TV and phones. Category taps can never become card or answer taps.
+  4. **Question prep (hold).** The question is shown in full, phones show «انتظر المقدم…» with the options disabled, and the clock is not running. This hold is the discussion time.
+  5. «ابدأ الوقت» brings a «جاوب الآن!» flash, then answers count and the 20-second timer runs (+5 / pause / resume in the tools).
+     - For fastest-finger categories («تحدي السرعة»), the TV shows «استعدوا». After «ابدأ التحدي» comes 3-2-1 انطلق!, then fast automatic play.
+  6. The result stays on screen. «التالي» advances; it is locked for the first 1.5 seconds. A 60-second safety fallback is the only auto-advance.
+- **Staged reactions (TV):**
+  - Stages: impact flash with the score (0.7s), then the main character animation, then about 1.5s of photo-worthy freeze with a camera flash.
+  - Durations: correct about 4.5s, wrong about 4.3s, steal about 5s.
+  - New variants: flex, money throw, bow, victory selfie, pointing, swagger entrance, flag wave, camel ride; crying, walking away, dramatic collapse, hiding, shocked, bonked, dragged off, sitting sad, disbelief; trophy grab, chased thief, sneaky tiptoe.
+  - One follow-up sound per reaction (applause / laugh / whoosh).
+- **Game length:** 10 / 16 / 22 (default 16).
+  - Old sessions: 15 → 16 and 20 → 22.
+  - A skipped turn still counts as that team's turn, so turns are always equal (5/5, 8/8, 11/11).
+- **Difficulty (selection only; points unchanged):**
+  - Every global question is `easy | medium | hard`. The classification of the 130 questions is in `src/content/difficulty.ts`.
+  - The game follows a curve: easy early, medium in the middle, hard late (10 → 4/4/2, 16 → 6/6/4, 22 → 8/8/6).
+  - Players still pick the category; the flipped card gets the closest-difficulty unused question in it, falling back gracefully.
+  - Players and the TV never see difficulty. The host sees a subtle badge.
+  - «وش تعرف عنه؟» questions are treated as medium internally.
+- **Question manager:** a difficulty chip per question, a «الصعوبة» field (default «متوسط»), and a filter by level.
+- **Database:** run [`supabase/migrations/20260925000000_v1_7_difficulty.sql`](supabase/migrations/20260925000000_v1_7_difficulty.sql) once in the Supabase SQL editor.
+  - It is additive: a nullable `difficulty` column plus fills for NULL rows only.
+  - Until it runs, the app still works. It uses the built-in classification and keeps host edits in a small `META:DIFFICULTY` document.
+  - After it runs, the app back-fills NULLs automatically.
+  - `/api/health` shows `difficultyFeature` and `difficultyStorage` (`column` | `fallback`).
+- **Tests:** `npm run test:engine` (fairness, curve, fallback, lengths), `node scripts/e2e-v17.mjs`.

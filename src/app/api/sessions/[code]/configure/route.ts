@@ -1,5 +1,5 @@
 // Setup screen → existing session: finish a draft, or replay with (possibly) new settings.
-import { GameError, reconfigure } from "@/lib/game/engine";
+import { GameError, normalizeLength, reconfigure } from "@/lib/game/engine";
 import { body, handle, json, view } from "@/lib/server/http";
 import { assertHost, loadSession, mutate } from "@/lib/server/sessions";
 import { readyStore } from "@/lib/server/store";
@@ -22,7 +22,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     const { code } = await ctx.params;
     const b = await body<ConfigureBody>(req);
     const store = await readyStore();
-    const total = [10, 15, 20].includes(Number(b.totalQuestions)) ? Number(b.totalQuestions) : 15;
+    const total = normalizeLength(b.totalQuestions); // 10 / 16 / 22 (old 15 → 16, 20 → 22)
     const rec = await loadSession(code);
     assertHost(rec, b.token);
     const categories = await store.listCategories({ themeId: rec.game.themeId });

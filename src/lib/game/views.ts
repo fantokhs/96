@@ -1,5 +1,5 @@
 // Project the private game state into what each role may see.
-import { isOnline, optionsOf, questionOf, remainingInCategory, voteCounts, votingPool } from "./engine";
+import { isOnline, levelOf, optionsOf, questionOf, remainingInCategory, voteCounts, votingPool } from "./engine";
 import type { Game, HostView, PublicGame, PublicPhase, PublicQuestion, PublicTeamVote, Question } from "./types";
 
 function teamVote(
@@ -45,8 +45,11 @@ function publicPhase(g: Game, now: number): PublicPhase {
         voters: Object.keys(p.votes),
         tie: p.tie,
         timer: p.timer,
+        complete: !!p.complete,
       };
     }
+    case "CARD_PICK":
+      return { name: p.name, teamId: p.teamId, categoryId: p.categoryId, timer: p.timer, readyAt: p.readyAt ?? 0 };
     case "QUESTION":
       return {
         name: p.name,
@@ -59,6 +62,7 @@ function publicPhase(g: Game, now: number): PublicPhase {
         attempt: p.attempt,
         readyAt: p.readyAt ?? 0,
         teamVote: p.buzzer ? null : teamVote(g, p, now),
+        hold: !!p.hold,
       };
     case "STEAL":
       return {
@@ -87,6 +91,7 @@ function publicPhase(g: Game, now: number): PublicPhase {
         answer: q.answer,
         correctOption: optionsOf(q) ? q.correctOption : null,
         timer: p.timer,
+        lockUntil: p.lockUntil ?? 0,
       };
     }
     default:
@@ -135,16 +140,19 @@ export function toHost(g: Game, version: number, now: number, pin = ""): HostVie
   const p = g.phase;
   let answer: string | null = null;
   let correctOption: number | null = null;
+  let difficulty: HostView["host"]["difficulty"] = null;
   if (p.name === "QUESTION" || p.name === "STEAL" || p.name === "RESULT") {
     const q = questionOf(g, p.questionId);
     answer = q.answer;
     correctOption = optionsOf(q) ? q.correctOption : null;
+    // personal questions have no formal difficulty (treated as medium internally, not shown)
+    difficulty = q.categoryId === "personal" ? null : levelOf(q);
   }
   const remaining: Record<string, number> = {};
   for (const id of g.categoryIds) remaining[id] = remainingInCategory(g, id);
   const counts = (p.name === "QUESTION" && !p.buzzer) || p.name === "STEAL" ? voteCounts(p) : null;
   return {
     ...toPublic(g, version, now),
-    host: { answer, correctOption, remaining, canUndo: !!g.undo, pin, voteCounts: counts },
+    host: { answer, correctOption, remaining, canUndo: !!g.undo, pin, voteCounts: counts, difficulty },
   };
 }

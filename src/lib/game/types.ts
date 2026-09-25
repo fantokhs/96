@@ -18,6 +18,14 @@ export const QUESTION_TYPES: { id: QuestionType; label: string }[] = [
 /** normal = active team answers; buzzer = fastest finger across all teams */
 export type CategoryMode = "normal" | "buzzer";
 
+/** V1.7: question difficulty (selection only — scoring is unchanged) */
+export type Difficulty = "easy" | "medium" | "hard";
+export const DIFFICULTIES: { id: Difficulty; label: string }[] = [
+  { id: "easy", label: "سهل" },
+  { id: "medium", label: "متوسط" },
+  { id: "hard", label: "صعب" },
+];
+
 export type PatternId = "star" | "lattice" | "arches" | "chevron" | "dots" | "waves";
 
 export interface Theme {
@@ -51,6 +59,8 @@ export interface Question {
   active: boolean;
   /** personalized «وش تعرف عنه؟» question: who it is about */
   about?: { profileId: string; name: string } | null;
+  /** V1.7 — null/undefined is treated as medium */
+  difficulty?: Difficulty | null;
 }
 
 export type Gender = "male" | "female" | null;
@@ -84,6 +94,8 @@ export interface Timer {
   remainingMs: number | null;
   /** stopped for good (answer locked) — pause/resume leaves it alone */
   stopped?: boolean;
+  /** V1.7: waiting for the host («ابدأ الوقت») — not running, pause/resume leaves it alone */
+  held?: boolean;
 }
 
 export interface Settings {
@@ -122,6 +134,8 @@ export interface Buzzer {
 
 export type Phase =
   | { name: "LOBBY" }
+  /** V1.7: opening screen after «ابدأ اللعبة» — waits for the host («ابدأ الجولة») */
+  | { name: "INTRO" }
   | {
       name: "CATEGORY_VOTE";
       teamId: string;
@@ -129,8 +143,17 @@ export type Phase =
       votes: Record<string, string>;
       tie: boolean;
       timer: Timer;
+      /** every team member voted — waiting for the host («اعرض النتيجة») */
+      complete?: boolean;
     }
-  | { name: "CARD_PICK"; teamId: string; categoryId: string; timer: Timer }
+  | {
+      name: "CARD_PICK";
+      teamId: string;
+      categoryId: string;
+      timer: Timer;
+      /** «تم اختيار …» 3-2-1: card taps rejected before this */
+      readyAt?: number;
+    }
   | {
       name: "QUESTION";
       teamId: string;
@@ -148,6 +171,8 @@ export type Phase =
       tie?: boolean;
       /** tie persisted after the tie-break: waiting for the host */
       stuck?: boolean;
+      /** V1.7: question shown, waiting for the host to start the time */
+      hold?: boolean;
     }
   | {
       name: "STEAL";
@@ -173,7 +198,10 @@ export type Phase =
       activeTeamId: string;
       categoryId: string;
       questionId: string;
+      /** long safety fallback only — the host advances with «التالي» */
       timer: Timer;
+      /** «التالي» is rejected before this (the reaction must be seen) */
+      lockUntil?: number;
     }
   | { name: "GAME_OVER"; winners: string[] };
 
@@ -198,7 +226,10 @@ export interface GameEvent {
     | "pause"
     | "resume"
     | "sfx"
-    | "undo";
+    | "undo"
+    | "intro"
+    | "go"
+    | "voted";
   teamId?: string | null;
   playerId?: string | null;
   points?: number;
@@ -291,7 +322,12 @@ export type HostAction =
   | { type: "tiebreak" }
   | { type: "team_answer"; option: number }
   | { type: "toggle_personal" }
-  | { type: "refresh_personal" };
+  | { type: "refresh_personal" }
+  /** V1.7 host pacing */
+  | { type: "begin_round" }
+  | { type: "close_vote" }
+  | { type: "reveal_card" }
+  | { type: "start_timer" };
 
 export type PlayerAction =
   | { type: "choose_team"; teamId: string | null }
@@ -350,6 +386,7 @@ export interface PublicQuestion {
 
 export type PublicPhase =
   | { name: "LOBBY" }
+  | { name: "INTRO" }
   | {
       name: "CATEGORY_VOTE";
       teamId: string;
@@ -358,8 +395,9 @@ export type PublicPhase =
       voters: string[];
       tie: boolean;
       timer: Timer;
+      complete: boolean;
     }
-  | { name: "CARD_PICK"; teamId: string; categoryId: string; timer: Timer }
+  | { name: "CARD_PICK"; teamId: string; categoryId: string; timer: Timer; readyAt: number }
   | {
       name: "QUESTION";
       teamId: string;
@@ -371,6 +409,7 @@ export type PublicPhase =
       attempt: { playerId: string; option: number; correct: boolean } | null;
       readyAt: number;
       teamVote: PublicTeamVote | null;
+      hold: boolean;
     }
   | {
       name: "STEAL";
@@ -396,6 +435,7 @@ export type PublicPhase =
       answer: string;
       correctOption: number | null;
       timer: Timer;
+      lockUntil: number;
     }
   | { name: "GAME_OVER"; winners: string[] };
 
@@ -433,5 +473,7 @@ export interface HostView extends PublicGame {
     pin: string;
     /** host-only: team vote distribution (option → votes) */
     voteCounts: Record<number, number> | null;
+    /** host-only: current question difficulty (subtle badge) */
+    difficulty: Difficulty | null;
   };
 }

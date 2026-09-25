@@ -35,11 +35,11 @@ for (const gone of ["الثيم", "3 فرق", "أول فريق يوصل", "تص�
   if ((await laptop.getByText(gone).count()) > 0) fail(`setup still shows «${gone}»`);
 }
 if ((await laptop.getByLabel(/اسم الفريق/).count()) !== 2) fail("expected exactly 2 team-name inputs");
-for (const n of ["10 أسئلة", "15 سؤال", "20 سؤال"]) await laptop.getByRole("button", { name: n, exact: true }).waitFor();
-if (!(await laptop.getByRole("button", { name: "15 سؤال", exact: true }).getAttribute("class")).includes("bg-gold")) fail("15 should be the default length");
+for (const n of ["10 أسئلة", "16 سؤال", "22 سؤال"]) await laptop.getByRole("button", { name: n, exact: true }).waitFor();
+if (!(await laptop.getByRole("button", { name: "16 سؤال", exact: true }).getAttribute("class")).includes("bg-gold")) fail("16 should be the default length");
 await laptop.getByRole("button", { name: "إنشاء الجلسة" }).waitFor();
 await laptop.screenshot({ path: `${SHOTS}/v16-01-setup.png`, fullPage: true });
-log("setup: no theme / team count / colors / score target / vote frequency; lengths 10/15/20 (15 default) ✓");
+log("setup: no theme / team count / colors / score target / vote frequency; lengths 10/16/22 (16 default) ✓");
 
 // ─── 2. Personal card «جهّز الرابط» → draft session before final setup ─────
 await laptop.getByLabel("اسم اللعبة").fill("عشاء الجمعة");
@@ -80,20 +80,20 @@ await laptop.screenshot({ path: `${SHOTS}/v16-03-setup-draft-ready.png`, fullPag
 log(`personal card → ready (${(await laptop.getByTestId("draft-line").textContent()).trim()}) ✓`);
 
 // ─── 4. Finish setup («اكمل إنشاء اللعبة») → post-create groups ────────────
-await laptop.getByRole("button", { name: "20 سؤال", exact: true }).click();
+await laptop.getByRole("button", { name: "22 سؤال", exact: true }).click();
 await laptop.getByRole("button", { name: "اكمل إنشاء اللعبة" }).click();
 await laptop.waitForURL(new RegExp(`/control/${code}$`));
 st = await state(code);
 if (st.draft) fail("draft flag should clear after setup");
 if (st.teams.length !== 2 || st.teams[0].name !== "النشامى" || st.teams[0].color !== "#22A06B" || st.teams[1].color !== "#D6A63A") fail(`teams ${JSON.stringify(st.teams)}`);
-if (st.settings.totalQuestions !== 20 || st.settings.voteEvery !== 1 || st.settings.targetScore !== null) fail(`settings ${JSON.stringify(st.settings)}`);
+if (st.settings.totalQuestions !== 22 || st.settings.voteEvery !== 1 || st.settings.targetScore !== null) fail(`settings ${JSON.stringify(st.settings)}`);
 for (const t of ["العائلة واللاعبون", "العرض والتحكم", "من هنا يقدرون يدخلون اللعبة أو يعبّون وش تعرف عنه؟", "ابدأ العرض 📺", "نسخ رابط العرض", "امسح الكود بالآيباد أو أي جهاز تبي تتحكم منه", "مشاركة الرابط", "نسخ الرابط"]) {
   await laptop.getByText(t).first().waitFor();
 }
 await laptop.getByText("رمز الدخول:").getByText("9696").waitFor();
 await laptop.getByText(`/join/${code}`).first().waitFor();
 await laptop.screenshot({ path: `${SHOTS}/v16-04-control-groups.png`, fullPage: true });
-log("same code kept; 2 teams (green/gold), 20 questions, vote every round; 3 post-create groups ✓");
+log("same code kept; 2 teams (green/gold), 22 questions, vote every round; 3 post-create groups ✓");
 
 // ─── 5. TV: one QR to /join, no control QR ──────────────────────────────────
 const tv = await (await browser.newContext({ viewport: { width: 1600, height: 900 } })).newPage();
@@ -146,7 +146,7 @@ await laptop.getByRole("button", { name: "استكمال اللعبة" }).waitFo
 await laptop.getByRole("button", { name: "إعادة من البداية" }).waitFor();
 if ((await laptop.getByLabel("اسم اللعبة").inputValue()) !== "عشاء الجمعة") fail("selecting a session should load its name");
 if ((await laptop.getByLabel("اسم الفريق 1").inputValue()) !== "النشامى") fail("selecting a session should load team names");
-if (!(await laptop.getByRole("button", { name: "20 سؤال", exact: true }).getAttribute("class")).includes("bg-gold")) fail("should load length 20");
+if (!(await laptop.getByRole("button", { name: "22 سؤال", exact: true }).getAttribute("class")).includes("bg-gold")) fail("should load length 22");
 await laptop.screenshot({ path: `${SHOTS}/v16-06-resume.png`, fullPage: true });
 await laptop.getByRole("button", { name: "استكمال اللعبة" }).click();
 await laptop.waitForURL(new RegExp(`/control/${code}$`));
@@ -200,7 +200,7 @@ if (bad.status !== 401) fail("configure must require host auth");
 log("API: 3 teams requested → 2 fixed (green/gold), vote every round, no score target; configure needs PIN/token ✓");
 
 const health = await (await fetch(`${BASE}/api/health`)).json();
-if (health.version !== "V1.6" || health.questions !== 130 || health.categories !== 11) fail(`health ${JSON.stringify(health)}`);
+if (!/^V1\.[6-9]/.test(health.version) || health.questions !== 130 || health.categories !== 11) fail(`health ${JSON.stringify(health)}`);
 log(`health: ${health.version}, ${health.categories} categories / ${health.questions} questions ✓`);
 
 await browser.close();
