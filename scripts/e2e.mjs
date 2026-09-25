@@ -32,6 +32,7 @@ const host = await hostCtx.newPage();
 
 // 1. Host creates game (defaults: الصقور vs الذيابة, 10 questions)
 await host.goto(`${BASE}/admin`);
+await host.getByRole("button", { name: "10 أسئلة" }).click(); // V1.6 default is 15
 await host.getByText("إنشاء الجلسة").click();
 await host.waitForURL(/\/control\/[A-Z0-9]{4}$/);
 const code = host.url().split("/").pop();

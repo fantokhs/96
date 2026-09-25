@@ -1,4 +1,5 @@
-import { createGame, GameError } from "@/lib/game/engine";
+import { createGame, DEFAULT_TEAM_COLORS, GameError } from "@/lib/game/engine";
+import { cleanupDrafts } from "@/lib/server/drafts";
 import type { Settings } from "@/lib/game/types";
 import { body, handle, json } from "@/lib/server/http";
 import { hashToken, newCode, newToken } from "@/lib/server/sessions";
@@ -13,6 +14,8 @@ interface CreateBody {
   teams?: { name: string; color: string }[];
   categoryIds?: string[];
   settings?: Partial<Settings>;
+  /** create an early "draft" session (for sharing /join + /know before setup is final) */
+  draft?: boolean;
 }
 
 const int = (v: unknown, min: number, max: number, fallback: number | null) => {
@@ -25,22 +28,23 @@ export async function POST(req: Request) {
     const b = await body<CreateBody>(req);
     const store = await readyStore();
     const themeId = b.themeId || THEME.id;
-    const teams = (b.teams ?? []).slice(0, 3).map((t, i) => ({
-      name: String(t.name || `فريق ${i + 1}`).trim().slice(0, 20),
-      color: /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : "#22A06B",
+    // V1.6: always two teams with fixed identity colours (green / gold)
+    const defaults = ["الصقور", "الذيابة"];
+    const teams = [0, 1].map((i) => ({
+      name: String(b.teams?.[i]?.name || defaults[i]).trim().slice(0, 20) || defaults[i],
+      color: DEFAULT_TEAM_COLORS[i],
     }));
-    if (teams.length < 2) throw new GameError("اختر فريقين على الأقل");
+    void cleanupDrafts(store).catch(() => {});
 
     const categories = await store.listCategories({ themeId });
     const wanted = b.categoryIds?.length ? b.categoryIds : categories.map((c) => c.id);
     const questions = await store.listQuestions({ themeId, categoryIds: wanted });
 
     const s = b.settings ?? {};
-    const targetScore = int(s.targetScore, 100, 100000, null);
     const settings: Partial<Settings> = {
-      totalQuestions: targetScore ? null : int(s.totalQuestions, 1, 200, 10),
-      targetScore,
-      voteEvery: s.voteEvery === 3 ? 3 : 1,
+      totalQuestions: int(s.totalQuestions, 1, 200, 15),
+      targetScore: null,
+      voteEvery: 1,
       questionSeconds: int(s.questionSeconds, 5, 120, 20)!,
       stealSeconds: int(s.stealSeconds, 3, 60, 10)!,
       correctPoints: int(s.correctPoints, 0, 10000, 100)!,
@@ -62,6 +66,7 @@ export async function POST(req: Request) {
         questions,
         now: Date.now(),
       });
+      if (b.draft) game.draft = true;
       if (await store.createSession(code, game, hashToken(hostToken))) {
         return json({ code, hostToken });
       }

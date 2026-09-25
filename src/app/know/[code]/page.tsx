@@ -244,20 +244,22 @@ export default function KnowPage({ params }: { params: Promise<{ code: string }>
             </p>
             <p className="text-cream/60">الحين لا تعلمهم وش كتبت 🤫</p>
             <div className="mt-2 grid w-full gap-2">
-              <button className="btn btn-gold py-4 text-lg" onClick={() => setScreen({ s: "home" })}>
-                أضف شخص ثاني
-              </button>
-              <button className="btn btn-ghost py-3" onClick={() => setScreen({ s: "name", mode: "other" })}>
-                عبّي عن أحد
-              </button>
+              <a className="btn btn-gold py-4 text-xl" href={`/play/${code}`}>
+                انضم للعبة 🎮
+              </a>
+              <div className="grid grid-cols-2 gap-2">
+                <button className="btn btn-ghost py-3" onClick={() => setScreen({ s: "home" })}>
+                  أضف شخص ثاني
+                </button>
+                <button className="btn btn-ghost py-3" onClick={() => setScreen({ s: "name", mode: "other" })}>
+                  بعبي عن أحد
+                </button>
+              </div>
               {screen.mine && (
                 <button className="btn btn-ghost py-3" disabled={busy} onClick={() => openEdit(screen.mine!)}>
-                  تعديل معلومات {screen.name}
+                  تعديل المعلومات
                 </button>
               )}
-              <button className="btn btn-ghost py-3" onClick={() => setScreen({ s: "finished" })}>
-                خلصت
-              </button>
             </div>
           </div>
         )}

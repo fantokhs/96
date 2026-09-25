@@ -4,13 +4,14 @@
 
 A real-time family party game for gatherings. The TV is the stage, every phone is a controller, and the host is the judge. The default theme is **Saudi National Day 96**.
 
-- **Host / Admin**: `/admin` creates a game, then `/host/CODE` runs it.
+- **Host / Admin**: `/admin` creates (or reopens) a session, then `/control/CODE` runs it (any device, PIN).
+- **Family link**: `/join/CODE`, one QR for joining the game or filling «وش تعرف عنه؟ 👀».
 - **TV screen**: `/screen/CODE`, fullscreen and readable from across the room.
 - **Players**: `/play/CODE`. Players scan the QR, type a name and join. No accounts.
 - **Content manager**: `/admin/content`, protected by a PIN.
 - **Test bench**: `/dev/CODE` shows the TV and 4 phones on one screen.
 
-Version: **V1.5**
+Version: **V1.6**
 
 ---
 
@@ -128,3 +129,27 @@ Host safety controls: pause/resume, skip, cancel a question, ±50 score adjustme
 - **When it's playable:** at ≥ 6 questions about ≥ 2 people.
 - **Host panel:** counts, a toggle, «تحديث» during a game, review (disable, pick among conflicting answers, delete).
 - **Tests:** `npm run test:personal`, `node scripts/e2e-personal.mjs`.
+
+## V1.6: simpler setup, sessions vs game runs
+
+- **Session vs game run.** A session keeps its code, name, team names, «وش تعرف عنه؟» data and category choices.
+  - «إعادة اللعب» / «إعادة من البداية» start a new *run* (`run` + `history` in the game document). They reset scores, turn, board, used questions, timer, winner, votes and buzzer.
+  - The code stays the same.
+- **Setup (`/admin`).**
+  - Game name, plus a dropdown with «لعبة جديدة» and the 5 most recent sessions on this device (`96:recent`, also filled by any control device).
+  - Two team names (fixed green / gold colours) and 10/15/20 questions (default 15).
+  - The category vote happens every round. There are no theme, team-count, colour, target-score or advanced settings.
+- **Selecting a recent session** loads it into the form:
+  - unfinished → «استكمال اللعبة» / «إعادة من البداية»;
+  - finished → «إعادة اللعب» (with «عرض النتائج السابقة»);
+  - draft → «اكمل إنشاء اللعبة».
+  - Server: `POST /api/sessions/CODE/configure` (host token or PIN).
+- **Draft sessions.** «جهّز الرابط» on the «وش تعرف عنه؟ 👀» card creates the session early, so `/join` and `/know` work before setup is finished.
+  - Drafts idle for 7 days, with no players and no personal submissions, are removed by a throttled best-effort sweep.
+  - Nothing else is ever deleted.
+- **Control screen groups:**
+  1. العائلة واللاعبون: QR → `/join/CODE`.
+  2. العرض والتحكم: «ابدأ العرض» new window + control QR + PIN.
+  3. وش تعرف عنه؟: counts, share/copy, review.
+- **TV lobby:** only the family QR. It never shows the control link or PIN.
+- **Tests:** `node scripts/e2e-v16.mjs`.

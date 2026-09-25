@@ -134,7 +134,23 @@ function useWakeLock(active: boolean) {
 function Lobby({ game }: { game: PublicGame }) {
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
-  const joinUrl = `${origin}/play/${game.code}`;
+  const joinUrl = `${origin}/join/${game.code}`;
+  // public, non-sensitive «وش تعرف عنه؟» ready count (refreshes while the lobby is up)
+  const [know, setKnow] = useState<{ people: number; count: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      fetch(`/api/know/${game.code}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((k) => alive && k && setKnow({ people: k.people, count: k.count }))
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 8000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [game.code]);
   return (
     <div className="flex h-full w-full items-stretch gap-[4vmin] p-[5vmin]">
       <div className="anim-rise flex w-[38%] flex-col items-center justify-center gap-[3vmin] text-center">
@@ -145,9 +161,15 @@ function Lobby({ game }: { game: PublicGame }) {
         </div>
         {origin && <QR value={joinUrl} size={Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.26)} />}
         <div className="flex flex-col items-center gap-1">
-          <span className="text-[2.4vmin] text-cream/60">امسح الكود أو ادخل الرمز</span>
+          <span className="text-[3vmin] font-bold">امسح الكود وانضم</span>
+          <span className="text-[2.1vmin] text-cream/60">ومن نفس الرابط تقدر تعبّي وش تعرف عنه؟ 👀</span>
           <span className="num text-[9vmin] font-bold tracking-[0.2em] text-goldlight">{game.code}</span>
-          <span className="num text-[2vmin] text-cream/50">{origin.replace(/^https?:\/\//, "")}/play/{game.code}</span>
+          <span className="num text-[2vmin] text-cream/50">{origin.replace(/^https?:\/\//, "")}/join/{game.code}</span>
+          {know && know.count > 0 && (
+            <span className="mt-1 rounded-full bg-[#C2410C]/30 px-[1.6vmin] py-[0.4vmin] text-[2.1vmin]">
+              وش تعرف عنه؟ 👀 <span className="num">{know.count}</span> سؤال جاهز عن <span className="num">{know.people}</span> أشخاص
+            </span>
+          )}
         </div>
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-[3vmin]">

@@ -5,7 +5,7 @@ import type { Outcome, PatternId, PublicPlayer, Team, Timer } from "@/lib/game/t
 import { useCountdown } from "@/lib/client/useGame";
 import { patternBg } from "./patterns";
 
-export const APP_VERSION = "V1.5";
+export const APP_VERSION = "V1.6";
 
 /** Official "خيمة الفنتوخ" logo (includes its own subtitle). `size` ≈ visual height / 1.4. */
 export function Logo96({ size = 64 }: { size?: number; sub?: boolean }) {

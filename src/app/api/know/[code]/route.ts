@@ -3,7 +3,7 @@ import { GameError } from "@/lib/game/engine";
 import { body, handle, json } from "@/lib/server/http";
 import { loadKnow, mutateKnow } from "@/lib/server/know";
 import { hashToken, loadSession, newId, newToken } from "@/lib/server/sessions";
-import { answeredKeys, applySubmission, findByName, PersonalError, type SubmitInput } from "@/lib/personal";
+import { answeredKeys, applySubmission, findByName, generatePersonal, readiness, PersonalError, type SubmitInput } from "@/lib/personal";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +16,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ code: string }
   return handle(async () => {
     const { code } = await ctx.params;
     const rec = await loadSession(code);
-    return json({ code: rec.game.code, name: rec.game.name });
+    // public, non-sensitive counts (setup card, TV lobby, /join)
+    const { doc } = await loadKnow(code);
+    const r = readiness(generatePersonal(doc));
+    return json({ code: rec.game.code, name: rec.game.name, people: doc.profiles.length, count: r.count, ready: r.ready });
   });
 }
 

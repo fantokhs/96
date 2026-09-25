@@ -247,6 +247,21 @@ export interface Game {
   streaks?: Record<string, number>;
   /** one-level undo (private) */
   undo?: UndoSnapshot | null;
+  /** session created early (e.g. to share «وش تعرف عنه؟») and not configured yet */
+  draft?: boolean;
+  /** current game run number within this session (1-based) */
+  run?: number;
+  /** finished/abandoned runs of this session */
+  history?: RunSummary[];
+}
+
+export interface RunSummary {
+  run: number;
+  endedAt: number;
+  finished: boolean;
+  questionsPlayed: number;
+  teams: { name: string; score: number }[];
+  winners: string[];
 }
 
 // ─── Actions ────────────────────────────────────────────────────────────────
@@ -398,6 +413,9 @@ export interface PublicGame {
   paused: boolean;
   event: GameEvent;
   streaks: Record<string, number>;
+  draft: boolean;
+  run: number;
+  history: RunSummary[];
   version: number;
   serverNow: number;
   /** how this client should listen for changes */

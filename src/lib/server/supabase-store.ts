@@ -147,6 +147,22 @@ export class SupabaseStore implements Store {
     return (data?.length ?? 0) > 0;
   }
 
+  async staleDrafts(before: number, limit: number) {
+    const data = check(
+      await this.db
+        .from("sessions")
+        .select("code")
+        .eq("state->>draft", "true")
+        .lt("updated_at", new Date(before).toISOString())
+        .limit(limit),
+    ) as { code: string }[];
+    return data.map((r) => r.code);
+  }
+
+  async deleteSession(code: string) {
+    check(await this.db.from("sessions").delete().eq("code", code));
+  }
+
   async listCategories(opts: { themeId?: string; includeInactive?: boolean } = {}) {
     let q = this.db.from("categories").select("*").order("sort");
     if (opts.themeId) q = q.eq("theme_id", opts.themeId);

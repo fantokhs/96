@@ -1,4 +1,4 @@
-// V1.5 «وش تعرف عنه؟ 👀» end-to-end: questionnaire → host readiness → personal question in play.
+// V1.5/V1.6 «وش تعرف عنه؟ 👀» end-to-end: questionnaire → host readiness → personal question in play.
 //   BASE_URL=http://localhost:3000 node scripts/e2e-personal.mjs
 import { execSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -37,6 +37,9 @@ await phoneA.getByText("وش تعرف عنكم العائلة؟").waitFor();
 await phoneA.screenshot({ path: `${SHOTS}/k1-home.png` });
 
 async function fill(page, answers) {
+  try { return await fill0(page, answers); } catch (e) { await page.screenshot({ path: `${SHOTS}/fail-fill.png` }); throw e; }
+}
+async function fill0(page, answers) {
   for (const a of answers) {
     const input = page.locator("input.field").first();
     await input.waitFor();
@@ -70,14 +73,16 @@ await phoneA.getByText("وش أكلة منيرة المفضلة؟").waitFor(); /
 await fill(phoneA, ["سوشي"]);
 await sendNow(phoneA, "منيرة");
 
-await phoneA.getByRole("button", { name: "عبّي عن أحد" }).click();
+await phoneA.getByRole("link", { name: /انضم للعبة/ }).waitFor(); // V1.6 primary CTA → /play
+await phoneA.getByRole("button", { name: "بعبي عن أحد" }).click();
 await phoneA.locator("#kname").fill("محمد");
 await phoneA.getByRole("button", { name: "ابدأ" }).click();
+await phoneA.getByText("وش أكلة محمد المفضلة؟").waitFor(); // name check is async — wait for the first question
 await fill(phoneA, ["كبسة", "أسود", "دبي", "الزحمة", "السفر", "شاي", null, "القهوة", "العطور", "النوم", "كنافة"]);
 await sendNow(phoneA, "محمد");
-await phoneA.getByRole("button", { name: "خلصت" }).click();
-await phoneA.getByText("شكراً").waitFor();
-await phoneA.getByRole("button", { name: "رجوع" }).click();
+const playHref = await phoneA.getByRole("link", { name: /انضم للعبة/ }).getAttribute("href");
+if (playHref !== `/play/${code}`) fail(`join CTA → ${playHref}`);
+await phoneA.getByRole("button", { name: "أضف شخص ثاني" }).click();
 for (const n of ["عزيز", "منيرة", "محمد"]) await phoneA.getByText("عبّيت عن").locator("..").getByText(n).waitFor();
 log("one phone → 3 profiles (3, 1, 10 answers) ✓");
 

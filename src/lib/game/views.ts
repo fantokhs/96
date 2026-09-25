@@ -123,6 +123,9 @@ export function toPublic(g: Game, version: number, now: number): PublicGame {
     paused: g.paused,
     event: g.event,
     streaks: g.streaks ?? {},
+    draft: !!g.draft,
+    run: g.run ?? 1,
+    history: g.history ?? [],
     version,
     serverNow: now,
   };

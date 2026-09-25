@@ -16,6 +16,7 @@ import {
   TimerRing,
 } from "@/components/ui";
 import { api, local } from "@/lib/client/api";
+import { rememberGame } from "@/lib/client/recent";
 import { useGame, useTickDriver, useUntil } from "@/lib/client/useGame";
 import type { HostAction, HostView, PublicPhase, SoundboardSfx } from "@/lib/game/types";
 import { INVITE_TEXT } from "@/lib/personal";
@@ -152,6 +153,11 @@ function HostConsoleInner({ code, token, onUnauthorized }: { code: string; token
   const [confirmEnd, setConfirmEnd] = useState(false);
   useEffect(() => setOrigin(window.location.origin), []);
   useTickDriver(game, now);
+  // every device that controls a session (creator or PIN) gets it in its recent list
+  const gameName = game?.name;
+  useEffect(() => {
+    if (gameName) rememberGame(code, gameName);
+  }, [code, gameName]);
 
   const send: Send = useCallback(
     async (action) => {
@@ -189,6 +195,7 @@ function HostConsoleInner({ code, token, onUnauthorized }: { code: string; token
     screen: `${origin}/screen/${code}`,
     control: `${origin}/control/${code}`,
     know: `${origin}/know/${code}`,
+    join: `${origin}/join/${code}`,
   };
 
   return (
@@ -288,7 +295,7 @@ function HostConsoleInner({ code, token, onUnauthorized }: { code: string; token
         {p.name === "GAME_OVER" && <OverPanel game={game} phase={p} send={send} />}
       </section>
 
-      {p.name !== "LOBBY" && <KnowPanel game={game} send={send} />}
+      {p.name !== "LOBBY" && <KnowPanel game={game} send={send} shareUrl={links.join} />}
 
       {p.name !== "LOBBY" && (
         <details className="panel p-4">
@@ -365,7 +372,7 @@ const SOUNDS: [SoundboardSfx, string][] = [
   ["applause", "👏 تصفيق"],
 ];
 
-type Links = { play: string; screen: string; control: string; know: string };
+type Links = { play: string; screen: string; control: string; know: string; join: string };
 
 function LinkCard({
   title,
@@ -440,69 +447,135 @@ function LinkCard({
   );
 }
 
-/** The three links a party needs: players (QR), TV screen, control device. */
+/** Post-create groups: family (one QR → /join) and display & control (TV + control device). */
 function LinksPanel({ game, links, compact = false }: { game: HostView; links: Links; compact?: boolean }) {
+  const qr = !compact && links.join.startsWith("http");
   return (
-    <div className={`grid gap-3 ${compact ? "md:grid-cols-2" : "md:grid-cols-2"}`}>
-      <LinkCard title="اللاعبون" icon="📱" url={links.play}>
-        {!compact && links.play.startsWith("http") && (
-          <div className="flex justify-center">
-            <QR value={links.play} size={170} />
-          </div>
-        )}
-      </LinkCard>
-      <LinkCard
-        title="شاشة العرض"
-        icon="📺"
-        url={links.screen}
-        onOpen={() => openTv(links.screen, game.code)}
-        note={<p className="text-xs text-cream/50">افتحها على اللابتوب واعرضها على التلفزيون (Cast tab)</p>}
-      />
-      <LinkCard
-        title="جهاز التحكم"
-        icon="🎮"
-        url={links.control}
-        note={
-          <p className="text-sm">
-            رمز الدخول: <span className="num font-bold text-goldlight">{game.host.pin}</span>
-          </p>
-        }
-      />
-      <LinkCard
-        title="وش تعرف عنه؟ 👀"
-        icon="📝"
-        url={links.know}
-        note={<p className="text-xs text-cream/50">شاركه قبل اللعبة: كل واحد يعبّي عن نفسه أو عن أي أحد</p>}
-      >
-        <InviteButton url={links.know} />
-      </LinkCard>
+    <div className="flex flex-col gap-4">
+      <Group title="العائلة واللاعبون">
+        <LinkCard title="رابط العائلة" icon="📱" url={links.join}>
+          {qr && (
+            <div className="flex flex-col items-center gap-2">
+              <QR value={links.join} size={200} />
+              <div className="num text-3xl font-bold tracking-[0.2em] text-goldlight">{game.code}</div>
+            </div>
+          )}
+          <p className="text-sm text-cream/70">من هنا يقدرون يدخلون اللعبة أو يعبّون وش تعرف عنه؟</p>
+        </LinkCard>
+      </Group>
+      <Group title="العرض والتحكم">
+        <div className="grid gap-3 md:grid-cols-2">
+          <TvCard url={links.screen} code={game.code} />
+          <LinkCard
+            title="جهاز التحكم"
+            icon="🎮"
+            url={links.control}
+            note={
+              <>
+                <p className="text-sm">
+                  رمز الدخول: <span className="num font-bold text-goldlight">{game.host.pin}</span>
+                </p>
+                <p className="text-xs text-cream/50">امسح الكود بالآيباد أو أي جهاز تبي تتحكم منه</p>
+              </>
+            }
+          >
+            {qr && (
+              <div className="flex justify-center">
+                <QR value={links.control} size={130} />
+              </div>
+            )}
+          </LinkCard>
+        </div>
+      </Group>
     </div>
   );
 }
 
-function InviteButton({ url }: { url: string }) {
-  const [done, setDone] = useState(false);
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <button
-      className="btn btn-ghost w-full py-2.5 text-sm"
-      onClick={async () => {
-        const text = INVITE_TEXT(url);
-        try {
-          await navigator.clipboard.writeText(text);
-        } catch {
-          const t = document.createElement("textarea");
-          t.value = text;
-          document.body.appendChild(t);
-          t.select();
-          document.execCommand("copy");
-          t.remove();
-        }
-        setDone(true);
-        setTimeout(() => setDone(false), 1600);
-      }}
-    >
-      {done ? "✓ نُسخت الرسالة" : "💬 نسخ رسالة الدعوة"}
-    </button>
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-bold text-cream/60">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const t = document.createElement("textarea");
+    t.value = text;
+    document.body.appendChild(t);
+    t.select();
+    document.execCommand("copy");
+    t.remove();
+  }
+}
+
+function TvCard({ url, code }: { url: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl bg-ink/50 p-4 ring-1 ring-cream/10">
+      <div className="flex items-center gap-2 text-lg font-bold">
+        <span className="text-2xl">📺</span>
+        شاشة العرض
+      </div>
+      <p className="text-xs text-cream/50">تنفتح في نافذة جديدة — اعرضها على التلفزيون (Cast / AirPlay / HDMI)</p>
+      <button className="btn btn-gold py-3 text-lg" onClick={() => openTv(url, code)}>
+        ابدأ العرض 📺
+      </button>
+      <button
+        className="btn btn-ghost py-2.5 text-sm"
+        onClick={async () => {
+          await copyText(url);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }}
+      >
+        {copied ? "✓ نُسخ" : "نسخ رابط العرض"}
+      </button>
+    </div>
+  );
+}
+
+/** «وش تعرف عنه؟» share row: the family link + an invite message. */
+function KnowShare({ url }: { url: string }) {
+  const [done, setDone] = useState("");
+  const flash = (t: string) => {
+    setDone(t);
+    setTimeout(() => setDone(""), 1600);
+  };
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <button
+        className="btn btn-gold py-2.5 text-sm"
+        onClick={async () => {
+          const text = INVITE_TEXT(url);
+          if (navigator.share) {
+            try {
+              await navigator.share({ title: "وش تعرف عنه؟ 👀", text });
+              return;
+            } catch (e) {
+              if ((e as Error).name === "AbortError") return;
+            }
+          }
+          await copyText(text);
+          flash("msg");
+        }}
+      >
+        {done === "msg" ? "✓ نُسخت الرسالة" : "مشاركة الرابط"}
+      </button>
+      <button
+        className="btn btn-ghost py-2.5 text-sm"
+        onClick={async () => {
+          await copyText(url);
+          flash("url");
+        }}
+      >
+        {done === "url" ? "✓ نُسخ" : "نسخ الرابط"}
+      </button>
+    </div>
   );
 }
 
@@ -521,7 +594,7 @@ type KnowSummary = {
 };
 
 /** «وش تعرف عنه؟ 👀» — counts, readiness, toggle, review. Polls lightly while visible. */
-function KnowPanel({ game, send, open = false }: { game: HostView; send: Send; open?: boolean }) {
+function KnowPanel({ game, send, open = false, shareUrl }: { game: HostView; send: Send; open?: boolean; shareUrl?: string }) {
   const token = useContext(TokenCtx);
   const [sum, setSum] = useState<KnowSummary | null>(null);
   const [person, setPerson] = useState<string | null>(null);
@@ -573,6 +646,7 @@ function KnowPanel({ game, send, open = false }: { game: HostView; send: Send; o
                 </>
               )}
             </div>
+            {shareUrl && <KnowShare url={shareUrl} />}
             <div className="flex flex-wrap items-center gap-2">
               <button className={`btn px-3 py-2 text-sm ${enabled ? "btn-gold" : "btn-ghost"}`} onClick={() => send({ type: "toggle_personal" })}>
                 {enabled ? "✓ الفئة مفعّلة" : "الفئة معطّلة"}
@@ -586,7 +660,8 @@ function KnowPanel({ game, send, open = false }: { game: HostView; send: Send; o
                 <span className="text-xs text-cream/50">{inGame ? "موجودة في هذه اللعبة" : "غير موجودة في هذه اللعبة"}</span>
               )}
             </div>
-            {game.phase.name === "LOBBY" && <p className="text-xs text-cream/50">تُجهّز الأسئلة تلقائياً لما تبدأ اللعبة</p>}
+            {game.phase.name === "LOBBY" && <p className="text-xs text-cream/50">تُجهّز الأسئلة تلقائياً عند البداية — ولو وصلت معلومات جديدة أثناء اللعب اضغط «تحديث»</p>}
+            {sum.profiles.length > 0 && <div className="text-xs text-cream/50">مراجعة الإجابات (اختياري):</div>}
             {sum.profiles.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {sum.profiles.map((p) => (
@@ -686,7 +761,7 @@ function LobbyPanel({ game, send, links, busy }: { game: HostView; send: Send; l
         <div className="num text-5xl font-bold tracking-[0.2em] text-goldlight">{game.code}</div>
       </div>
       <LinksPanel game={game} links={links} />
-      <KnowPanel game={game} send={send} open />
+      <KnowPanel game={game} send={send} open shareUrl={links.join} />
       <PlayersEditor game={game} send={send} />
       <button className="btn btn-gold py-4 text-xl" disabled={busy} onClick={() => send({ type: "start" })}>
         ابدأ اللعبة

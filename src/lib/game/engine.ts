@@ -656,6 +656,7 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
       if (p.name !== "LOBBY") throw new GameError("اللعبة بدأت");
       for (const pl of g.players) if (!pl.teamId) pl.teamId = smallestTeam(g, rng).id;
       g.turn = { activeTeamIndex: 0, questionsPlayed: 0, currentCategoryId: null, categoryUsesLeft: 0 };
+      g.draft = false; // a started session is never a draft
       emit(g, { kind: "start" });
       startTurn(g, now, rng);
       break;
@@ -734,19 +735,9 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
       if (p.name === "GAME_OVER") break;
       gameOver(g);
       break;
-    case "replay": {
-      for (const t of g.teams) t.score = 0;
-      g.turn = { activeTeamIndex: 0, questionsPlayed: 0, currentCategoryId: null, categoryUsesLeft: 0 };
-      g.boards = {};
-      g.paused = false;
-      g.streaks = {};
-      g.undo = null;
-      // Keep used questions out so the rematch feels fresh; recycle if the pool runs dry.
-      if (availableCategories(g).length === 0) g.usedQuestionIds = [];
-      g.phase = { name: "LOBBY" };
-      emit(g, { kind: "join" });
+    case "replay":
+      resetRun(g, now);
       break;
-    }
     case "toggle_sound":
       g.settings.soundOn = !g.settings.soundOn;
       break;
@@ -945,3 +936,82 @@ export function withPersonal(
   if (active) g.categoryIds.push(PERSONAL);
   return g;
 }
+
+// ─── Session vs. game run ────────────────────────────────────────────────────
+
+/** Start a fresh run in the same session: scores, turn, board, used questions reset. */
+export function resetRun(g: Game, now: number) {
+  const p = g.phase;
+  const played = g.turn.questionsPlayed > 0 || (p.name !== "LOBBY" && p.name !== "GAME_OVER");
+  if (played || p.name === "GAME_OVER") {
+    g.history = [
+      ...(g.history ?? []),
+      {
+        run: g.run ?? 1,
+        endedAt: now,
+        finished: p.name === "GAME_OVER",
+        questionsPlayed: g.turn.questionsPlayed,
+        teams: g.teams.map((t) => ({ name: t.name, score: t.score })),
+        winners: p.name === "GAME_OVER" ? p.winners.map((id) => g.teams.find((t) => t.id === id)?.name ?? id) : [],
+      },
+    ].slice(-20);
+    g.run = (g.run ?? 1) + 1;
+  }
+  for (const t of g.teams) t.score = 0;
+  g.turn = { activeTeamIndex: 0, questionsPlayed: 0, currentCategoryId: null, categoryUsesLeft: 0 };
+  g.boards = {};
+  g.usedQuestionIds = [];
+  g.paused = false;
+  g.streaks = {};
+  g.undo = null;
+  g.phase = { name: "LOBBY" };
+  emit(g, { kind: "join" });
+}
+
+export interface ReconfigureInput {
+  name: string;
+  teamNames: [string, string];
+  categoryIds: string[];
+  totalQuestions: number;
+  personalEnabled: boolean;
+  categories: Category[];
+  questions: Question[];
+  /** start a new run (otherwise only allowed before the game starts) */
+  reset: boolean;
+  now: number;
+}
+
+/** Apply setup-screen settings to an existing session (draft → ready, or replay). */
+export function reconfigure(prev: Game, input: ReconfigureInput): Game {
+  const g = structuredClone(prev);
+  const inProgress = g.phase.name !== "LOBBY" && g.phase.name !== "GAME_OVER";
+  if (inProgress && !input.reset) throw new GameError("اللعبة شغالة — استكملها أو ابدأ من جديد");
+  const fresh = createGame({
+    code: g.code,
+    name: input.name,
+    themeId: g.themeId,
+    teams: input.teamNames.map((n, i) => ({ name: n, color: g.teams[i]?.color ?? DEFAULT_TEAM_COLORS[i] })),
+    categoryIds: input.categoryIds,
+    settings: {},
+    categories: input.categories,
+    questions: input.questions,
+    now: input.now,
+  });
+  g.name = fresh.name;
+  g.teams = g.teams.slice(0, 2).map((t, i) => ({ ...t, name: fresh.teams[i].name }));
+  for (const p of g.players) if (!g.teams.some((t) => t.id === p.teamId)) p.teamId = g.teams[0].id;
+  g.content = fresh.content;
+  g.categoryIds = fresh.categoryIds;
+  g.settings = {
+    ...g.settings,
+    totalQuestions: input.totalQuestions,
+    targetScore: null,
+    voteEvery: 1,
+    personalEnabled: input.personalEnabled,
+  };
+  g.draft = false;
+  if (input.reset || g.phase.name === "GAME_OVER") resetRun(g, input.now);
+  return g;
+}
+
+export const DEFAULT_TEAM_COLORS = ["#22A06B", "#D6A63A"];

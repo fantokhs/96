@@ -21,6 +21,10 @@ export interface Store {
   getSession(code: string): Promise<SessionRecord | null>;
   /** Compare-and-set on version. Returns false when someone else wrote first. */
   updateSession(code: string, expectedVersion: number, game: Game): Promise<boolean>;
+  /** Codes of draft sessions not written since `before` (ms epoch). */
+  staleDrafts(before: number, limit: number): Promise<string[]>;
+  /** Hard delete — only used by the guarded draft cleanup. */
+  deleteSession(code: string): Promise<void>;
 
   listCategories(opts?: { themeId?: string; includeInactive?: boolean }): Promise<Category[]>;
   listQuestions(opts?: { themeId?: string; categoryIds?: string[]; includeInactive?: boolean }): Promise<Question[]>;
