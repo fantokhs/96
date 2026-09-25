@@ -639,6 +639,11 @@ function Reaction({ game, phase }: { game: PublicGame; phase: Phase<"RESULT"> })
       points={phase.points}
       answer={phase.answer}
       streak={good ? game.streaks[teamId] ?? 0 : 0}
+      about={
+        phase.question.about
+          ? { name: phase.question.about.name, player: game.players.find((p) => p.id === phase.question.about!.playerId) ?? null }
+          : null
+      }
     />
   );
 }

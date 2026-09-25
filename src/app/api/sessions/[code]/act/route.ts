@@ -1,4 +1,6 @@
-import { applyHost, applyPlayer, applyTick, GameError, needsPing } from "@/lib/game/engine";
+import { applyHost, applyPlayer, applyTick, GameError, needsPing, withPersonal } from "@/lib/game/engine";
+import { findByName, generatePersonal, PERSONAL_CATEGORY, readiness } from "@/lib/personal";
+import { loadKnow } from "@/lib/server/know";
 import type { HostAction, PlayerAction } from "@/lib/game/types";
 import { body, handle, json, view } from "@/lib/server/http";
 import { assertHost, assertPlayer, mutate } from "@/lib/server/sessions";
@@ -18,9 +20,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     const now = () => Date.now();
 
     if (b.role === "host") {
+      // «وش تعرف عنه؟ 👀»: (re)generate the session's personal questions when the game
+      // starts, when the host toggles the category, or on an explicit refresh.
+      const personalDoc = ["start", "toggle_personal", "refresh_personal"].includes(b.action.type)
+        ? (await loadKnow(code)).doc
+        : null;
+      const personal = personalDoc ? generatePersonal(personalDoc) : null;
       const res = await mutate(code, (game, rec) => {
         assertHost(rec, b.token);
-        return applyHost(game, b.action, now());
+        let g = game;
+        if (personal && personalDoc) {
+          const enabledAfter =
+            b.action.type === "toggle_personal" ? game.settings.personalEnabled === false : game.settings.personalEnabled !== false;
+          const links: Record<string, string | null> = {};
+          for (const p of game.players) links[p.id] = findByName(personalDoc, p.name)?.id ?? null;
+          g = withPersonal(g, PERSONAL_CATEGORY, readiness(personal).ready ? personal.questions : [], links, enabledAfter);
+        }
+        return applyHost(g, b.action, now());
       });
       return json(view(res.game, res.version, "host"));
     }

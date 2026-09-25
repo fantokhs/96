@@ -49,6 +49,8 @@ export interface Question {
   options: string[] | null;
   correctOption: number | null;
   active: boolean;
+  /** personalized «وش تعرف عنه؟» question: who it is about */
+  about?: { profileId: string; name: string } | null;
 }
 
 export type Gender = "male" | "female" | null;
@@ -62,6 +64,8 @@ export interface Player {
   joinedAt: number;
   /** last heartbeat from the player's phone (presence for team voting) */
   lastSeen?: number;
+  /** linked «وش تعرف عنه؟» profile (same normalized name) */
+  profileId?: string | null;
   /** private — never sent to clients */
   token: string;
 }
@@ -93,6 +97,8 @@ export interface Settings {
   stealPoints: number;
   cardsPerCategory: number;
   soundOn: boolean;
+  /** «وش تعرف عنه؟ 👀» category enabled (used when enough answers exist) */
+  personalEnabled?: boolean;
 }
 
 export interface Card {
@@ -268,7 +274,9 @@ export type HostAction =
   | { type: "undo" }
   | { type: "add_time"; seconds: number }
   | { type: "tiebreak" }
-  | { type: "team_answer"; option: number };
+  | { type: "team_answer"; option: number }
+  | { type: "toggle_personal" }
+  | { type: "refresh_personal" };
 
 export type PlayerAction =
   | { type: "choose_team"; teamId: string | null }
@@ -321,6 +329,8 @@ export interface PublicQuestion {
   points: number;
   imageUrl: string | null;
   options: string[] | null;
+  /** personalized question: who it is about (+ linked live player for the photo) */
+  about?: { name: string; playerId: string | null } | null;
 }
 
 export type PublicPhase =

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { use, useCallback, useEffect, useState } from "react";
+import { createContext, use, useCallback, useContext, useEffect, useState } from "react";
 import { patternBg } from "@/components/patterns";
 import {
   APP_VERSION,
@@ -18,6 +18,7 @@ import {
 import { api, local } from "@/lib/client/api";
 import { useGame, useTickDriver, useUntil } from "@/lib/client/useGame";
 import type { HostAction, HostView, PublicPhase, SoundboardSfx } from "@/lib/game/types";
+import { INVITE_TEXT } from "@/lib/personal";
 
 type Phase<N extends PublicPhase["name"]> = Extract<PublicPhase, { name: N }>;
 type Send = (a: HostAction) => Promise<void>;
@@ -133,7 +134,17 @@ function Center({ children }: { children: React.ReactNode }) {
   return <main className="flex min-h-dvh items-center justify-center">{children}</main>;
 }
 
-function HostConsole({ code, token, onUnauthorized }: { code: string; token: string; onUnauthorized: () => void }) {
+const TokenCtx = createContext("");
+
+function HostConsole(props: { code: string; token: string; onUnauthorized: () => void }) {
+  return (
+    <TokenCtx.Provider value={props.token}>
+      <HostConsoleInner {...props} />
+    </TokenCtx.Provider>
+  );
+}
+
+function HostConsoleInner({ code, token, onUnauthorized }: { code: string; token: string; onUnauthorized: () => void }) {
   const { game, setGame, error, online, now } = useGame<HostView>(code, token);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
@@ -177,6 +188,7 @@ function HostConsole({ code, token, onUnauthorized }: { code: string; token: str
     play: `${origin}/play/${code}`,
     screen: `${origin}/screen/${code}`,
     control: `${origin}/control/${code}`,
+    know: `${origin}/know/${code}`,
   };
 
   return (
@@ -276,6 +288,8 @@ function HostConsole({ code, token, onUnauthorized }: { code: string; token: str
         {p.name === "GAME_OVER" && <OverPanel game={game} phase={p} send={send} />}
       </section>
 
+      {p.name !== "LOBBY" && <KnowPanel game={game} send={send} />}
+
       {p.name !== "LOBBY" && (
         <details className="panel p-4">
           <summary className="cursor-pointer font-semibold text-cream/80">🔗 الروابط واللاعبون</summary>
@@ -351,7 +365,7 @@ const SOUNDS: [SoundboardSfx, string][] = [
   ["applause", "👏 تصفيق"],
 ];
 
-type Links = { play: string; screen: string; control: string };
+type Links = { play: string; screen: string; control: string; know: string };
 
 function LinkCard({
   title,
@@ -429,7 +443,7 @@ function LinkCard({
 /** The three links a party needs: players (QR), TV screen, control device. */
 function LinksPanel({ game, links, compact = false }: { game: HostView; links: Links; compact?: boolean }) {
   return (
-    <div className={`grid gap-3 ${compact ? "md:grid-cols-3" : "md:grid-cols-3"}`}>
+    <div className={`grid gap-3 ${compact ? "md:grid-cols-2" : "md:grid-cols-2"}`}>
       <LinkCard title="اللاعبون" icon="📱" url={links.play}>
         {!compact && links.play.startsWith("http") && (
           <div className="flex justify-center">
@@ -454,7 +468,212 @@ function LinksPanel({ game, links, compact = false }: { game: HostView; links: L
           </p>
         }
       />
+      <LinkCard
+        title="وش تعرف عنه؟ 👀"
+        icon="📝"
+        url={links.know}
+        note={<p className="text-xs text-cream/50">شاركه قبل اللعبة: كل واحد يعبّي عن نفسه أو عن أي أحد</p>}
+      >
+        <InviteButton url={links.know} />
+      </LinkCard>
     </div>
+  );
+}
+
+function InviteButton({ url }: { url: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      className="btn btn-ghost w-full py-2.5 text-sm"
+      onClick={async () => {
+        const text = INVITE_TEXT(url);
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          const t = document.createElement("textarea");
+          t.value = text;
+          document.body.appendChild(t);
+          t.select();
+          document.execCommand("copy");
+          t.remove();
+        }
+        setDone(true);
+        setTimeout(() => setDone(false), 1600);
+      }}
+    >
+      {done ? "✓ نُسخت الرسالة" : "💬 نسخ رسالة الدعوة"}
+    </button>
+  );
+}
+
+type KnowSummary = {
+  count: number;
+  people: number;
+  ready: boolean;
+  total: number;
+  profiles: {
+    id: string;
+    name: string;
+    playable: number;
+    answers: { key: string; label: string; items: { id: string; text: string; disabled: boolean; usable: boolean; canonical: boolean }[] }[];
+    custom: { id: string; question: string; answer: string; wrong: string[]; active: boolean }[];
+  }[];
+};
+
+/** «وش تعرف عنه؟ 👀» — counts, readiness, toggle, review. Polls lightly while visible. */
+function KnowPanel({ game, send, open = false }: { game: HostView; send: Send; open?: boolean }) {
+  const token = useContext(TokenCtx);
+  const [sum, setSum] = useState<KnowSummary | null>(null);
+  const [person, setPerson] = useState<string | null>(null);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      setSum(await api<KnowSummary>(`/api/know/${game.code}/host`, { headers: { "x-host-token": token } }));
+    } catch {}
+  }, [game.code, token]);
+  useEffect(() => {
+    void load();
+    const id = setInterval(() => document.visibilityState === "visible" && void load(), 6000);
+    return () => clearInterval(id);
+  }, [load]);
+  const act = async (a: object) => {
+    try {
+      setSum(await api<KnowSummary>(`/api/know/${game.code}/host`, { json: a, headers: { "x-host-token": token } }));
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  };
+  const enabled = game.settings.personalEnabled !== false;
+  const inGame = game.categories.some((c) => c.id === "personal");
+  const sel = sum?.profiles.find((p) => p.id === person);
+  return (
+    <details className="panel p-4" open={open}>
+      <summary className="cursor-pointer font-semibold text-cream/80">
+        وش تعرف عنه؟ 👀{" "}
+        {sum && (
+          <span className="text-sm text-cream/60">
+            · الأشخاص: <span className="num">{sum.total}</span> · الأسئلة الجاهزة: <span className="num">{sum.count}</span>
+          </span>
+        )}
+      </summary>
+      <div className="mt-3 flex flex-col gap-3">
+        {!sum ? (
+          <Spinner />
+        ) : (
+          <>
+            <div className={`rounded-xl px-3 py-2 text-center font-semibold ${sum.ready ? "bg-leaf/25 text-cream" : "bg-ink/50 text-cream/70"}`}>
+              {sum.ready ? (
+                <>
+                  <span className="num">{sum.count}</span> سؤال جاهز من <span className="num">{sum.people}</span> أشخاص
+                </>
+              ) : (
+                <>
+                  <span className="num">{Math.min(sum.count, 6)}</span> من <span className="num">6</span> أسئلة جاهزة — بانتظار معلومات أكثر
+                  {sum.people < 2 && " (من شخصين على الأقل)"}
+                </>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button className={`btn px-3 py-2 text-sm ${enabled ? "btn-gold" : "btn-ghost"}`} onClick={() => send({ type: "toggle_personal" })}>
+                {enabled ? "✓ الفئة مفعّلة" : "الفئة معطّلة"}
+              </button>
+              {game.phase.name !== "LOBBY" && game.phase.name !== "GAME_OVER" && (
+                <button className="btn btn-ghost px-3 py-2 text-sm" onClick={() => send({ type: "refresh_personal" })}>
+                  🔄 تحديث الأسئلة في اللعبة
+                </button>
+              )}
+              {game.phase.name !== "LOBBY" && (
+                <span className="text-xs text-cream/50">{inGame ? "موجودة في هذه اللعبة" : "غير موجودة في هذه اللعبة"}</span>
+              )}
+            </div>
+            {game.phase.name === "LOBBY" && <p className="text-xs text-cream/50">تُجهّز الأسئلة تلقائياً لما تبدأ اللعبة</p>}
+            {sum.profiles.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {sum.profiles.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`rounded-full px-3 py-1.5 text-sm ${person === p.id ? "bg-gold text-ink" : "bg-cream/10"}`}
+                    onClick={() => setPerson(person === p.id ? null : p.id)}
+                  >
+                    {p.name} <span className="num opacity-70">{p.playable}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {sel && (
+              <div className="flex flex-col gap-2 rounded-xl bg-ink/50 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold">مراجعة: {sel.name}</span>
+                  <button
+                    className="text-sm text-[#ff8a85]"
+                    onClick={() => {
+                      if (confirm(`حذف ${sel.name} وكل معلوماته؟`)) {
+                        setPerson(null);
+                        void act({ type: "delete_profile", profileId: sel.id });
+                      }
+                    }}
+                  >
+                    حذف شخص
+                  </button>
+                </div>
+                {sel.answers.map((f) => (
+                  <div key={f.key} className="text-sm">
+                    <div className="text-cream/50">{f.label}</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {f.items.map((it) => (
+                        <span
+                          key={it.id}
+                          className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 ${it.canonical ? "bg-leaf/30" : "bg-cream/5"} ${it.disabled || !it.usable ? "line-through opacity-50" : ""}`}
+                        >
+                          {it.text}
+                          {f.items.length > 1 && !it.canonical && (
+                            <button className="text-xs text-goldlight" onClick={() => act({ type: "set_primary", profileId: sel.id, answerId: it.id })}>
+                              اعتمد
+                            </button>
+                          )}
+                          <button className="text-xs text-cream/60" onClick={() => act({ type: "toggle_answer", profileId: sel.id, answerId: it.id })}>
+                            {it.disabled ? "تفعيل" : "تعطيل"}
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {sel.custom.map((c) => (
+                  <div key={c.id} className={`text-sm ${c.active ? "" : "opacity-50"}`}>
+                    <div className="text-cream/50">سؤال خاص</div>
+                    {c.question} ← <span className="text-goldlight">{c.answer}</span>
+                    {c.wrong.length > 0 && <span className="text-cream/40"> ({c.wrong.join("، ")})</span>}
+                    <button className="ms-2 text-xs text-cream/60" onClick={() => act({ type: "toggle_custom", profileId: sel.id, customId: c.id })}>
+                      {c.active ? "تعطيل" : "تفعيل"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {sum.total > 0 && (
+              <div className="flex justify-end">
+                {confirmAll ? (
+                  <span className="flex items-center gap-2 text-sm">
+                    متأكد؟
+                    <button className="btn btn-red px-3 py-1.5 text-sm" onClick={() => { setConfirmAll(false); setPerson(null); void act({ type: "delete_all" }); }}>
+                      احذف الكل
+                    </button>
+                    <button className="btn btn-ghost px-3 py-1.5 text-sm" onClick={() => setConfirmAll(false)}>
+                      إلغاء
+                    </button>
+                  </span>
+                ) : (
+                  <button className="text-xs text-cream/40 underline" onClick={() => setConfirmAll(true)}>
+                    حذف جميع بيانات وش تعرف عنه؟
+                  </button>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -467,6 +686,7 @@ function LobbyPanel({ game, send, links, busy }: { game: HostView; send: Send; l
         <div className="num text-5xl font-bold tracking-[0.2em] text-goldlight">{game.code}</div>
       </div>
       <LinksPanel game={game} links={links} />
+      <KnowPanel game={game} send={send} open />
       <PlayersEditor game={game} send={send} />
       <button className="btn btn-gold py-4 text-xl" disabled={busy} onClick={() => send({ type: "start" })}>
         ابدأ اللعبة

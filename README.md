@@ -10,7 +10,7 @@ A real-time family party game for gatherings. The TV is the stage, every phone i
 - **Content manager**: `/admin/content`, protected by a PIN.
 - **Test bench**: `/dev/CODE` shows the TV and 4 phones on one screen.
 
-Version: **V1.4**
+Version: **V1.5**
 
 ---
 
@@ -111,3 +111,20 @@ Host safety controls: pause/resume, skip, cancel a question, ±50 score adjustme
 ### Themes
 - A theme is a `themes` row plus its categories and questions (`theme_id`).
 - Colors and patterns are per category, so a Ramadan or World Cup theme is just new content. No code changes are needed.
+
+## «وش تعرف عنه؟ 👀» (V1.5)
+
+- **Before the gathering:** share `/know/CODE` (fourth card on the control screen, with «نسخ رسالة الدعوة»).
+  - Anyone can fill in facts about themselves or anyone else: 15 optional light questions plus up to 3 custom questions.
+  - One phone can fill in for many people.
+  - The same name from another device adds to that person's profile and never overwrites.
+- **Storage:** data is session-scoped and kept in its own document, a separate `KNOW:<CODE>` row in the existing `sessions` table.
+  - No schema change was needed.
+  - It never touches the global `questions` table.
+- **At «ابدأ اللعبة»:** the category is generated deterministically, with no AI.
+  - Wrong options come from other family members' answers to the same field, then curated fallback pools.
+  - Cards rotate fairly between people.
+  - A team isn't asked about its own linked player when another question exists.
+- **When it's playable:** at ≥ 6 questions about ≥ 2 people.
+- **Host panel:** counts, a toggle, «تحديث» during a game, review (disable, pick among conflicting answers, delete).
+- **Tests:** `npm run test:personal`, `node scripts/e2e-personal.mjs`.

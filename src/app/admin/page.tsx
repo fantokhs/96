@@ -40,6 +40,7 @@ export default function AdminCreate() {
   const [selected, setSelected] = useState<string[] | null>(null);
   const [length, setLength] = useState<{ kind: "q" | "score"; n: number }>({ kind: "q", n: 10 });
   const [voteEvery, setVoteEvery] = useState(1);
+  const [personal, setPersonal] = useState(true);
   const [advanced, setAdvanced] = useState(false);
   const [adv, setAdv] = useState({ questionSeconds: 20, stealSeconds: 10, correctPoints: 100, stealPoints: 50 });
   const [busy, setBusy] = useState(false);
@@ -71,6 +72,7 @@ export default function AdminCreate() {
             totalQuestions: length.kind === "q" ? length.n : null,
             targetScore: length.kind === "score" ? length.n : null,
             voteEvery,
+            personalEnabled: personal,
             ...adv,
           },
         },
@@ -190,6 +192,24 @@ export default function AdminCreate() {
             );
           })}
         </div>
+      </Section>
+
+      <Section title="فئة العائلة">
+        <button
+          onClick={() => setPersonal((x) => !x)}
+          className="flex items-center justify-between rounded-2xl p-4 text-right transition"
+          style={{
+            backgroundColor: personal ? "#C2410C" : "rgba(4,26,18,.6)",
+            backgroundImage: personal ? patternBg("dots", "rgba(255,255,255,.18)") : undefined,
+            boxShadow: personal ? "none" : "inset 0 0 0 1.5px #C2410C66",
+          }}
+        >
+          <span>
+            <span className="block text-lg font-bold">وش تعرف عنه؟ 👀</span>
+            <span className="text-xs text-cream/80">أسئلة عن العائلة نفسها — شارك رابطها بعد إنشاء اللعبة. تتفعّل لما تجهز ٦ أسئلة عن شخصين</span>
+          </span>
+          <span className="text-xl">{personal ? "✓" : ""}</span>
+        </button>
       </Section>
 
       <Section title="طول اللعبة">

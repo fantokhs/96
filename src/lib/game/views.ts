@@ -16,8 +16,11 @@ function teamVote(
   };
 }
 
-function publicQuestion(q: Question): PublicQuestion {
+function publicQuestion(g: Game, q: Question): PublicQuestion {
   return {
+    about: q.about
+      ? { name: q.about.name, playerId: g.players.find((p) => p.profileId && p.profileId === q.about!.profileId)?.id ?? null }
+      : null,
     id: q.id,
     categoryId: q.categoryId,
     question: q.question,
@@ -50,7 +53,7 @@ function publicPhase(g: Game, now: number): PublicPhase {
         teamId: p.teamId,
         categoryId: p.categoryId,
         cardIndex: p.cardIndex,
-        question: publicQuestion(questionOf(g, p.questionId)),
+        question: publicQuestion(g, questionOf(g, p.questionId)),
         timer: p.timer,
         buzzer: p.buzzer,
         attempt: p.attempt,
@@ -64,7 +67,7 @@ function publicPhase(g: Game, now: number): PublicPhase {
         teamId: p.teamId,
         categoryId: p.categoryId,
         cardIndex: p.cardIndex,
-        question: publicQuestion(questionOf(g, p.questionId)),
+        question: publicQuestion(g, questionOf(g, p.questionId)),
         timer: p.timer,
         attempt: p.attempt,
         excludedOption: p.excludedOption,
@@ -80,7 +83,7 @@ function publicPhase(g: Game, now: number): PublicPhase {
         points: p.points,
         activeTeamId: p.activeTeamId,
         categoryId: p.categoryId,
-        question: publicQuestion(q),
+        question: publicQuestion(g, q),
         answer: q.answer,
         correctOption: optionsOf(q) ? q.correctOption : null,
         timer: p.timer,

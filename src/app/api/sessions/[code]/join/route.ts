@@ -2,6 +2,8 @@ import { addPlayer, GameError } from "@/lib/game/engine";
 import type { Gender } from "@/lib/game/types";
 import { body, handle, json, view } from "@/lib/server/http";
 import { mutate, newId, newToken } from "@/lib/server/sessions";
+import { loadKnow } from "@/lib/server/know";
+import { findByName } from "@/lib/personal";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +24,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     const gender: Gender = b.gender === "male" || b.gender === "female" ? b.gender : null;
     const playerId = newId("p_");
     const token = newToken();
+    // link to a «وش تعرف عنه؟» profile with the same (normalized) name, for photo reveals
+    const profileId = findByName((await loadKnow(code).catch(() => null))?.doc ?? { v: 1, profiles: [], contributions: [] }, name)?.id ?? null;
     const res = await mutate(code, (game) =>
-      addPlayer(game, { id: playerId, token, name, gender, avatarUrl, teamId: b.teamId ?? null }, Date.now()),
+      addPlayer(game, { id: playerId, token, name, gender, avatarUrl, teamId: b.teamId ?? null, profileId }, Date.now()),
     );
     return json({ playerId, token, state: view(res.game, res.version, "public") });
   });

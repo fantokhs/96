@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { PublicPlayer, Team } from "@/lib/game/types";
 import { confettiBurst } from "./effects";
-import { Character } from "./ui";
+import { Avatar, Character } from "./ui";
 
 export type ReactionKind = "correct" | "wrong" | "steal" | "skipped";
 
@@ -85,6 +85,9 @@ interface Variant {
 
 const CORRECT_LINES = ["كفو!", "يا سلام!", "وحش!", "سهلة!", "كذا اللعب!", "عرفها!", "يا قوي!", "ما شاء الله!", "عين عليك باردة", "صح عليك!", "أبدعت!"];
 const WRONG_LINES = ["يا ساتر!", "راحت عليك", "قريبة!", "ركز شوي", "الله يعوض", "مو اليوم", "كان عندك أمل", "وش صار؟", "أوف!", "المرة الجاية"];
+// «وش تعرف عنه؟ 👀» — {n} is the person the question was about
+const PERSONAL_CORRECT = ["عارفينه زين!", "مكشوف يا {n}!", "حافظينه!", "يعرفونك أكثر منك يا {n}", "واضح ما عند {n} أسرار"];
+const PERSONAL_WRONG = ["واضح ما تعرفونه", "مين عايش مع مين؟", "أعيدوا التعارف", "شكلكم ما تسولفون مع بعض", "ورطكم {n}"];
 const STEAL_LINES = ["سرقوها!", "خذوها!", "راحت منكم!", "سرقة نظيفة", "شكراً على الهدية", "مع السلامة يا نقاط", "ما قصرتوا", "جاهزة ومغلفة بعد!"];
 
 const CORRECT: Variant[] = [
@@ -291,6 +294,7 @@ export function GameReaction({
   streak = 0,
   surface = "tv",
   durationMs,
+  about,
 }: {
   kind: ReactionKind;
   /** kept for API compatibility (older callers) */
@@ -303,6 +307,8 @@ export function GameReaction({
   streak?: number;
   surface?: "tv" | "phone";
   durationMs?: number;
+  /** personalized question: who it was about (+ their live player, for the photo) */
+  about?: { name: string; player: PublicPlayer | null } | null;
 }) {
   const variant = useMemo<Variant | null>(() => {
     if (kind === "skipped") return null;
@@ -312,9 +318,11 @@ export function GameReaction({
   }, [kind, surface]);
   const title = useMemo(() => {
     if (kind === "skipped") return "تم التخطي";
+    if (about && (kind === "correct" || kind === "wrong"))
+      return pickLine(`p-${kind}`, kind === "correct" ? PERSONAL_CORRECT : PERSONAL_WRONG).replace("{n}", about.name);
     const lines = variant?.lines ?? (kind === "correct" ? CORRECT_LINES : kind === "wrong" ? WRONG_LINES : STEAL_LINES);
     return pickLine(kind, lines);
-  }, [kind, variant]);
+  }, [kind, variant, about]);
   const total = durationMs ?? (kind === "steal" ? 3600 : 2800);
   const [show, setShow] = useState(true);
 
@@ -379,7 +387,23 @@ export function GameReaction({
         </div>
       )}
 
-      {answer && (
+      {answer && about && (
+        <div
+          className="anim-rise relative z-[2] flex items-center gap-[2vmin] rounded-[2vmin] bg-deep/90 px-[3vmin] py-[1.4vmin]"
+          style={{ animationDelay: "400ms" }}
+        >
+          {about.player ? (
+            <Avatar player={about.player} color="#d6a63a" size={tv ? Math.round(window.innerHeight * 0.08) : 48} />
+          ) : (
+            <span className="text-[5vmin]">👀</span>
+          )}
+          <div className="text-start">
+            <div className="text-[2.6vmin] font-bold text-cream/70">{about.name}</div>
+            <div className="text-[4.4vmin] leading-tight font-black text-goldlight">«{answer}»</div>
+          </div>
+        </div>
+      )}
+      {answer && !about && (
         <div className="anim-rise relative z-[2] rounded-[2vmin] bg-deep/90 px-[3vmin] py-[1.4vmin] text-center" style={{ animationDelay: "400ms" }}>
           <span className="text-[2.6vmin] text-cream/60">الإجابة: </span>
           <span className="text-[4vmin] font-bold text-goldlight">{answer}</span>

@@ -45,6 +45,7 @@ export async function POST(req: Request) {
       stealSeconds: int(s.stealSeconds, 3, 60, 10)!,
       correctPoints: int(s.correctPoints, 0, 10000, 100)!,
       stealPoints: int(s.stealPoints, 0, 10000, 50)!,
+      personalEnabled: s.personalEnabled !== false,
     };
 
     const hostToken = newToken();

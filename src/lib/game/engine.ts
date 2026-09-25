@@ -156,11 +156,44 @@ function availableCategories(g: Game): string[] {
   return g.categoryIds.filter((id) => remainingInCategory(g, id) > 0);
 }
 
+const PERSONAL = "personal";
+
+/**
+ * «وش تعرف عنه؟»: deal cards round-robin across people, starting with whoever has
+ * been asked about least, so one well-filled profile can't dominate the category.
+ */
+function balancedPersonal(g: Game, ids: string[], n: number, rng: Rng): string[] {
+  const asked: Record<string, number> = {};
+  for (const id of g.usedQuestionIds) {
+    const pid = g.content.questions[id]?.about?.profileId;
+    if (pid) asked[pid] = (asked[pid] ?? 0) + 1;
+  }
+  const byPerson = new Map<string, string[]>();
+  for (const id of shuffle(ids, rng)) {
+    const pid = g.content.questions[id]?.about?.profileId ?? id;
+    byPerson.set(pid, [...(byPerson.get(pid) ?? []), id]);
+  }
+  const people = shuffle([...byPerson.keys()], rng).sort((a, b) => (asked[a] ?? 0) - (asked[b] ?? 0));
+  const out: string[] = [];
+  while (out.length < n && people.some((p) => byPerson.get(p)!.length)) {
+    for (const p of people) {
+      const next = byPerson.get(p)!.shift();
+      if (next) out.push(next);
+      if (out.length >= n) break;
+    }
+  }
+  return out;
+}
+
 /** Make sure the category has a board with at least one face-down card. */
 function ensureBoard(g: Game, categoryId: string, rng: Rng) {
   const board = g.boards[categoryId];
   if (board && board.some((c) => !c.used)) return;
-  const ids = shuffle(unusedQuestionIds(g, categoryId), rng).slice(0, g.settings.cardsPerCategory);
+  const unused = unusedQuestionIds(g, categoryId);
+  const ids =
+    categoryId === PERSONAL
+      ? balancedPersonal(g, unused, g.settings.cardsPerCategory, rng)
+      : shuffle(unused, rng).slice(0, g.settings.cardsPerCategory);
   g.boards[categoryId] = ids.map<Card>((questionId) => ({ questionId, used: false, outcome: null }));
 }
 
@@ -214,6 +247,7 @@ export interface JoinInput {
   gender: Player["gender"];
   avatarUrl: string | null;
   teamId: string | null;
+  profileId?: string | null;
 }
 
 export function addPlayer(prev: Game, input: JoinInput, now: number, rng: Rng = Math.random): Game {
@@ -233,6 +267,7 @@ export function addPlayer(prev: Game, input: JoinInput, now: number, rng: Rng = 
     teamId,
     joinedAt: now,
     lastSeen: now,
+    profileId: input.profileId ?? null,
   });
   emit(g, { kind: "join", playerId: input.id, teamId });
   return g;
@@ -297,6 +332,7 @@ function flipCard(g: Game, index: number, now: number) {
   const { teamId, categoryId } = g.phase;
   const card = g.boards[categoryId]?.[index];
   if (!card || card.used) throw new GameError("هذا الكرت مستخدم");
+  if (categoryId === PERSONAL) avoidOwnTeam(g, card, teamId);
   card.used = true;
   g.usedQuestionIds.push(card.questionId);
   g.turn.categoryUsesLeft = Math.max(0, g.turn.categoryUsesLeft - 1);
@@ -317,6 +353,25 @@ function flipCard(g: Game, index: number, now: number) {
     stuck: false,
   };
   emit(g, { kind: "flip", teamId });
+}
+
+/** Prefer not to ask a team about one of its own live players (when another question exists). */
+function avoidOwnTeam(g: Game, card: Card, teamId: string) {
+  const aboutTeam = (qid: string) => {
+    const pid = g.content.questions[qid]?.about?.profileId;
+    return !!pid && g.players.some((p) => p.profileId === pid && p.teamId === teamId);
+  };
+  if (!aboutTeam(card.questionId)) return;
+  const board = g.boards[PERSONAL] ?? [];
+  const onBoard = new Set(board.map((c) => c.questionId));
+  const offBoard = unusedQuestionIds(g, PERSONAL).find((id) => !aboutTeam(id));
+  if (offBoard) {
+    card.questionId = offBoard;
+    return;
+  }
+  // otherwise swap with another face-down card on the board
+  const other = board.find((c) => !c.used && c !== card && onBoard.has(c.questionId) && !aboutTeam(c.questionId));
+  if (other) [card.questionId, other.questionId] = [other.questionId, card.questionId];
 }
 
 function finish(g: Game, outcome: Outcome, scorer: string | null, points: number, now: number) {
@@ -722,6 +777,12 @@ export function applyHost(prev: Game, action: HostAction, now: number, rng: Rng 
       }
       break;
     }
+    case "refresh_personal":
+      // content is injected by the API before this runs; nothing else changes
+      break;
+    case "toggle_personal":
+      g.settings.personalEnabled = g.settings.personalEnabled === false;
+      break;
     case "tiebreak": {
       const ap = answerPhase(g);
       if (ap.attempt) throw new GameError("تم اعتماد إجابة الفريق");
@@ -851,4 +912,36 @@ export function applyTick(prev: Game, now: number, rng: Rng = Math.random): Game
     return g;
   }
   return null;
+}
+
+// ─── «وش تعرف عنه؟ 👀» injection ────────────────────────────────────────────
+
+/**
+ * Replace the session's personalized questions (called by the API at game start /
+ * host refresh). Questions already on the board or in play keep their object, used
+ * ones stay used, and players are linked to profiles by exact normalized name.
+ */
+export function withPersonal(
+  prev: Game,
+  category: Category,
+  questions: Question[],
+  links: Record<string, string | null>,
+  enabled: boolean,
+): Game {
+  const g = structuredClone(prev);
+  for (const p of g.players) if (p.id in links) p.profileId = links[p.id];
+  const keep = new Set<string>([...(g.boards[PERSONAL] ?? []).map((c) => c.questionId)]);
+  const ph = g.phase as Phase & { questionId?: string };
+  if (ph.questionId) keep.add(ph.questionId);
+  for (const [id, q] of Object.entries(g.content.questions)) {
+    if (q.categoryId === PERSONAL && !keep.has(id)) delete g.content.questions[id];
+  }
+  const active = enabled && questions.length > 0;
+  if (active) for (const q of questions) if (!g.content.questions[q.id]) g.content.questions[q.id] = q;
+  g.content.categories = g.content.categories.filter((c) => c.id !== PERSONAL);
+  const hasAny = Object.values(g.content.questions).some((q) => q.categoryId === PERSONAL);
+  if (active || hasAny) g.content.categories.push(category);
+  g.categoryIds = g.categoryIds.filter((id) => id !== PERSONAL);
+  if (active) g.categoryIds.push(PERSONAL);
+  return g;
 }
